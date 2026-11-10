@@ -1,18 +1,16 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { haloDir } from "./config";
 
 /** Key names halo looks for, in order. */
 const ENV_KEYS = [
   "HALO_API_KEY",
   "DEEPSEEK_API_KEY",
   "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "GROQ_API_KEY",
   "META_API_KEY",
 ] as const;
-
-function haloDir(): string {
-  return join(homedir(), ".halo");
-}
 
 function envFilePath(): string {
   return join(haloDir(), ".env");
@@ -75,11 +73,11 @@ export async function resolveApiKey(
   return null;
 }
 
-/** Saves the key to ~/.halo/.env (mode 600), preserving other entries. */
-export async function saveApiKey(key: string): Promise<string> {
+/** Saves `key` under env var `name` in ~/.halo/.env (mode 600), preserving other entries. */
+export async function saveApiKey(name: string, key: string): Promise<string> {
   await mkdir(haloDir(), { recursive: true, mode: 0o700 });
   const merged = await loadHaloEnv();
-  merged.HALO_API_KEY = key;
+  merged[name] = key;
   const body =
     Object.entries(merged)
       .map(([k, v]) => `${k}=${v}`)

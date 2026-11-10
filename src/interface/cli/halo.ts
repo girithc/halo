@@ -2,7 +2,7 @@
 /**
  * halo — terminal coding agent.
  *
- *   halo              interactive session
+ *   halo              interactive session (first run: setup wizard)
  *   halo "prompt"     one-shot answer
  */
 import { CANCEL, InputReader, parseInput } from "../../core/in/input";
@@ -11,15 +11,12 @@ import {
   DEFAULT_MODEL,
   MODEL_PRESETS,
   ModelRegistry,
+  needsApiKey,
 } from "../../models/registry";
 import type { ChatMessage, ModelConfig } from "../../models/types";
 import { configPath, loadConfig, saveConfig } from "../../secrets/config";
-import {
-  maskKey,
-  resolveApiKey,
-  saveApiKey,
-  type ApiKey,
-} from "../../secrets/store";
+import { resolveApiKey, type ApiKey } from "../../secrets/store";
+import { runOnboarding } from "./onboard";
 
 const VERSION = "0.1.0";
 const SYSTEM_PROMPT =
@@ -45,15 +42,16 @@ async function main(): Promise<void> {
 
   // Resolve the starting model: env > ~/.halo/config.json > default preset.
   const stored = await loadConfig();
+  const fallback = (stored.provider ? MODEL_PRESETS[stored.provider] : undefined) ?? DEFAULT_MODEL;
   const base: ModelConfig = {
-    id: process.env.HALO_MODEL ?? stored.model ?? DEFAULT_MODEL.id,
-    baseURL: process.env.HALO_BASE_URL ?? stored.baseURL ?? DEFAULT_MODEL.baseURL,
-    api: parseApi(process.env.HALO_API) ?? stored.api,
+    ...fallback,
+    name: stored.provider ?? fallback.name,
+    id: process.env.HALO_MODEL ?? stored.model ?? fallback.id,
+    baseURL: process.env.HALO_BASE_URL ?? stored.baseURL ?? fallback.baseURL,
+    api: parseApi(process.env.HALO_API) ?? stored.api ?? fallback.api,
+    apiKeyEnv: stored.apiKeyEnv ?? fallback.apiKeyEnv,
   };
   const registry = new ModelRegistry(base);
-
-  let auth: ApiKey | null = await resolveApiKey();
-  out.banner(registry.active(), auth?.source ?? null);
 
   let currentRequest: AbortController | null = null;
   const reader = new InputReader(() => {
@@ -65,16 +63,33 @@ async function main(): Promise<void> {
     process.exit(0);
   });
 
-  if (!auth) {
-    const interactive = process.stdin.isTTY === true;
-    if (!interactive) {
+  // Credentials: stored keys first; otherwise the first-run wizard (TTY only).
+  let auth: ApiKey | null = await resolveApiKey(base.apiKeyEnv);
+  if (!auth && needsApiKey(base)) {
+    if (process.stdin.isTTY !== true) {
       throw new Error(
-        "no API key found — set HALO_API_KEY (or run `halo` in a terminal to paste one)",
+        `no API key found — set ${(base.apiKeyEnv ?? ["HALO_API_KEY"]).join(" or ")}` +
+          " (or run `halo` in a terminal to set one up)",
       );
     }
-    auth = await onboard(reader);
+    const result = await runOnboarding(reader);
+    registry.setConfig(result.config);
+    auth = {
+      key: result.apiKey ?? "local",
+      source: result.apiKey ? "~/.halo/.env" : "",
+    };
   }
+  if (!auth) auth = { key: "local", source: "" }; // local provider, no key
   const apiKey = auth.key;
+
+  out.banner(
+    registry.active(),
+    needsApiKey(registry.active())
+      ? auth.source
+        ? `key from ${auth.source}`
+        : null
+      : "local model — no API key needed",
+  );
 
   const history: ChatMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
 
@@ -86,13 +101,10 @@ async function main(): Promise<void> {
     let reply = "";
     try {
       // Re-resolve per request so /model switches pick the right key.
-      const auth =
-        (await resolveApiKey(registry.active().apiKeyEnv)) ?? {
-          key: apiKey,
-          source: "session",
-        };
+      const requestAuth =
+        (await resolveApiKey(registry.active().apiKeyEnv)) ?? auth!;
       for await (const chunk of registry
-        .createProvider(auth.key)
+        .createProvider(requestAuth.key)
         .chat(history, ac.signal)) {
         reply += chunk.delta;
         view.delta(chunk.delta);
@@ -137,12 +149,15 @@ async function main(): Promise<void> {
         return;
       }
       case "config": {
+        const active = registry.active();
         const path = await saveConfig({
-          model: registry.active().id,
-          baseURL: registry.active().baseURL,
-          api: registry.active().api,
+          provider: active.name,
+          model: active.id,
+          baseURL: active.baseURL,
+          api: active.api,
+          apiKeyEnv: active.apiKeyEnv,
         });
-        out.success(`saved ${registry.active().id} → ${path}`);
+        out.success(`saved ${active.id} → ${path}`);
         return;
       }
       case "clear":
@@ -176,19 +191,6 @@ async function main(): Promise<void> {
 
   reader.close();
   out.info("bye 👋");
-}
-
-/** First run: no key anywhere. Prompt once and persist it. */
-async function onboard(reader: InputReader): Promise<ApiKey> {
-  out.info("no API key found on this machine");
-  const raw = await reader.readLine("paste your API key (stored in ~/.halo/.env): ");
-  const key = raw.trim();
-  if (!key || key === CANCEL) {
-    throw new Error("halo needs an API key — set HALO_API_KEY and run again");
-  }
-  const path = await saveApiKey(key);
-  out.success(`key ${maskKey(key)} saved to ${path}`);
-  return { key, source: path };
 }
 
 main().catch((err: unknown) => {

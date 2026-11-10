@@ -1,8 +1,8 @@
 import type { ModelConfig } from "../../models/types";
 
 const RESET = "\x1b[0m";
-const dim = (s: string) => `${DIM}${s}${RESET}`;
-const bold = (s: string) => `\x1b[1m${s}${RESET}`;
+export const dim = (s: string) => `${DIM}${s}${RESET}`;
+export const bold = (s: string) => `\x1b[1m${s}${RESET}`;
 const green = (s: string) => `\x1b[32m${s}${RESET}`;
 const red = (s: string) => `\x1b[31m${s}${RESET}`;
 const cyan = (s: string) => `\x1b[36m${s}${RESET}`;
@@ -10,11 +10,11 @@ const DIM = "\x1b[2m";
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-export function banner(model: ModelConfig, keySource: string | null): void {
+export function banner(model: ModelConfig, note: string | null): void {
   console.log();
   const kind = model.api === "responses" ? " · responses-api" : "";
   console.log(bold("◐ halo") + dim(` · ${model.id}${kind} · ${model.baseURL}`));
-  if (keySource) console.log(dim(`  key from ${keySource}`));
+  if (note) console.log(dim(`  ${note}`));
   console.log(dim("  /help for commands · ctrl-c to exit"));
 }
 

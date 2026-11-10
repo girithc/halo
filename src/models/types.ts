@@ -16,6 +16,8 @@ export interface ChatChunk {
 }
 
 export interface ModelConfig {
+  /** Preset name, e.g. "deepseek" — kept so /config can round-trip it. */
+  name?: string;
   /** Model id exactly as the provider API expects it, e.g. "deepseek-chat". */
   id: string;
   /** Base URL, e.g. "https://api.deepseek.com/v1". */
