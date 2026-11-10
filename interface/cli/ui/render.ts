@@ -94,6 +94,7 @@ function pushWrapped(
   body: string,
   style: { color?: string; dim?: boolean; italic?: boolean },
   width: number,
+  spacing = 0, // optional: blank lines added below the pushed content
 ): void {
   const firstWidth = Math.max(10, width - prefix.length);
   const wrapped = wrapText(body, firstWidth);
@@ -104,4 +105,5 @@ function pushWrapped(
       lines.push({ prefix: "  ", text, ...style });
     }
   });
+  for (let i = 0; i < spacing; i++) lines.push({ text: "" });
 }
