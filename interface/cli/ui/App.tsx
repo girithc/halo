@@ -276,7 +276,7 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
           {modelId} ·{" "}
           {busy
             ? "esc to interrupt"
-            : "enter to send · /help commands · ctrl-c to quit"}
+            : "/help commands · ctrl-c to quit"}
         </Text>
       </Box>
     </Box>
