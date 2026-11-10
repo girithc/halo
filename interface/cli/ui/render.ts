@@ -18,14 +18,13 @@ export function renderChat(
 ): Line[] {
   const lines: Line[] = [];
   for (const m of messages) {
-    const gap = m.role === "user" ? 2 : 1;
-    for (let i = 0; i < gap; i++) lines.push({ text: "" });
+    lines.push({ text: "" }); // one blank line before every turn
     switch (m.role) {
       case "user":
-        pushWrapped(lines, "you ❯ ", "magentaBright", m.text, {}, opts.width, 1);
+        pushWrapped(lines, "you ❯ ", "magentaBright", m.text, {}, opts.width, 0.5);
         break;
       case "assistant":
-        if (m.text) pushWrapped(lines, "halo ❯ ", "cyan", m.text, {}, opts.width, 2);
+        if (m.text) pushWrapped(lines, "halo ❯ ", "cyan", m.text, {}, opts.width, 1);
         break;
       case "info":
         pushWrapped(lines, "", undefined, `· ${m.text}`, { dim: true }, opts.width);
