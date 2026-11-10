@@ -22,10 +22,10 @@ export function renderChat(
     for (let i = 0; i < gap; i++) lines.push({ text: "" });
     switch (m.role) {
       case "user":
-        pushWrapped(lines, "you ❯ ", "magentaBright", m.text, {}, opts.width);
+        pushWrapped(lines, "you ❯ ", "magentaBright", m.text, {}, opts.width, 0.5);
         break;
       case "assistant":
-        if (m.text) pushWrapped(lines, "halo ❯ ", "cyan", m.text, {}, opts.width);
+        if (m.text) pushWrapped(lines, "halo ❯ ", "cyan", m.text, {}, opts.width, 1);
         break;
       case "info":
         pushWrapped(lines, "", undefined, `· ${m.text}`, { dim: true }, opts.width);
@@ -105,13 +105,7 @@ function pushWrapped(
       lines.push({ prefix: "  ", text, ...style });
     }
   });
-  // Terminals are whole-row grids: the whole part of `spacing` becomes
-  // blank lines, and a fractional part becomes a dim half-block strip
-  // (▄) — the closest a character grid gets to half a line of space.
-  const whole = Math.max(0, Math.floor(spacing));
-  const fractional = spacing - whole;
-  for (let i = 0; i < whole; i++) lines.push({ text: "" });
-  if (fractional > 0) {
-    lines.push({ text: "▄".repeat(width), dim: true });
+  for (let i = 0; i < Math.max(0, Math.floor(spacing)); i++) {
+    lines.push({ text: "" });
   }
 }
