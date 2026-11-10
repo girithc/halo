@@ -22,10 +22,10 @@ export function renderChat(
     for (let i = 0; i < gap; i++) lines.push({ text: "" });
     switch (m.role) {
       case "user":
-        pushWrapped(lines, "you ❯ ", "magentaBright", m.text, {}, opts.width, 0.5);
+        pushWrapped(lines, "you ❯ ", "magentaBright", m.text, {}, opts.width, 1);
         break;
       case "assistant":
-        if (m.text) pushWrapped(lines, "halo ❯ ", "cyan", m.text, {}, opts.width, 1);
+        if (m.text) pushWrapped(lines, "halo ❯ ", "cyan", m.text, {}, opts.width, 2);
         break;
       case "info":
         pushWrapped(lines, "", undefined, `· ${m.text}`, { dim: true }, opts.width);

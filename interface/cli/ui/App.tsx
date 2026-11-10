@@ -37,7 +37,9 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
           <Text key={i}>
             {line.prefix && <Text color={line.prefixColor}>{line.prefix}</Text>}
             <Text color={line.color} dimColor={line.dim} italic={line.italic}>
-              {line.text}
+              {/* ink collapses empty text to zero height — a lone space
+                  is what makes a blank line actually occupy a row */}
+              {line.text === "" ? " " : line.text}
             </Text>
           </Text>
         ))}
