@@ -36,6 +36,11 @@ export class MetaProvider implements ModelProvider {
         model: this.config.id,
         input: messages.map((m) => ({ role: m.role, content: m.content })),
         stream: true,
+        // Without this the server defaults to effort "high" and thinks
+        // for a very long time before the first token.
+        ...(this.config.reasoningEffort
+          ? { reasoning: { effort: this.config.reasoningEffort } }
+          : {}),
       }),
       signal,
     });

@@ -16,6 +16,7 @@ export const MODEL_PRESETS: Record<string, ModelConfig> = {
     baseURL: "https://api.meta.ai/v1",
     api: "responses",
     apiKeyEnv: ["META_API_KEY", "MODEL_API_KEY"],
+    reasoningEffort: "medium",
   },
   openai: {
     name: "openai",

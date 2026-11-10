@@ -74,9 +74,11 @@ export interface StreamView {
 export function createStreamView(label = "waiting"): StreamView {
   let phase: "idle" | "reasoning" | "answer" = "idle";
   let i = 0;
+  const t0 = Date.now();
   const timer = setInterval(() => {
+    const secs = Math.floor((Date.now() - t0) / 1000);
     process.stdout.write(
-      `\r\x1b[K${cyan(FRAMES[i % FRAMES.length]!)} ${dim(label)}`,
+      `\r\x1b[K${cyan(FRAMES[i % FRAMES.length]!)} ${dim(`${label} · ${secs}s`)}`,
     );
     i++;
   }, 80);

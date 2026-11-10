@@ -4,10 +4,10 @@
  *
  * Run: HALO_DIR=$(mktemp -d) bash -c 'printf "2\nsk-test-meta-123\n1\n" | bun run test/onboard.ts'
  */
-import { InputReader } from "../src/core/in/input";
-import { runOnboarding } from "../src/interface/cli/onboard";
-import { configPath, loadConfig } from "../src/secrets/config";
-import { loadHaloEnv } from "../src/secrets/store";
+import { InputReader } from "../core/in/input";
+import { runOnboarding } from "../interface/cli/onboard";
+import { configPath, loadConfig } from "../secrets/config";
+import { loadHaloEnv } from "../secrets/store";
 
 const reader = new InputReader(() => process.exit(0));
 const result = await runOnboarding(reader);

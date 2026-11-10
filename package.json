@@ -4,15 +4,20 @@
   "description": "Halo — a terminal coding agent harness",
   "type": "module",
   "bin": {
-    "halo": "./src/interface/cli/halo.ts"
+    "halo": "./interface/cli/halo.ts"
   },
   "scripts": {
-    "dev": "bun run src/interface/cli/halo.ts",
+    "dev": "bun run interface/cli/halo.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun run test/smoke.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
+    "@types/react": "18",
     "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "ink": "5",
+    "react": "18"
   }
 }

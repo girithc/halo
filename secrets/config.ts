@@ -9,6 +9,7 @@ export interface HaloConfig {
   baseURL?: string;
   api?: "chat-completions" | "responses";
   apiKeyEnv?: string[];
+  reasoningEffort?: "low" | "medium" | "high";
 }
 
 /** Root of halo's machine-wide store; override with HALO_DIR (tests use this). */

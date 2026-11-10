@@ -5,8 +5,8 @@
  *
  * Run: bun run test/smoke.ts
  */
-import { MetaProvider } from "../src/models/providers/meta";
-import { OpenAICompatibleProvider } from "../src/models/providers/openai-compatible";
+import { MetaProvider } from "../models/providers/meta";
+import { OpenAICompatibleProvider } from "../models/providers/openai-compatible";
 
 const CHUNKS = ["Hello", ", ", "halo", "!"];
 

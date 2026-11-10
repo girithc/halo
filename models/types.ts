@@ -34,6 +34,8 @@ export interface ModelConfig {
   api?: "chat-completions" | "responses";
   /** Env var names that hold this provider's key, checked first. */
   apiKeyEnv?: string[];
+  /** Reasoning effort for thinking models (Responses API only). */
+  reasoningEffort?: "low" | "medium" | "high";
 }
 
 /** Any chat backend that can stream a reply. */
