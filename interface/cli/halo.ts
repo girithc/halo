@@ -89,11 +89,17 @@ async function main(): Promise<void> {
     throw new Error('interactive mode needs a terminal — use: halo "prompt"');
   }
 
-  const { waitUntilExit } = render(
-    createElement(App, { registry, apiKey }),
-    { exitOnCtrlC: false },
-  );
-  await waitUntilExit();
+  // Take over the whole terminal (alternate screen), restore on exit.
+  process.stdout.write("\x1b[?1049h\x1b[?25l");
+  try {
+    const { waitUntilExit } = render(
+      createElement(App, { registry, apiKey }),
+      { exitOnCtrlC: false },
+    );
+    await waitUntilExit();
+  } finally {
+    process.stdout.write("\x1b[?25h\x1b[?1049l");
+  }
   out.info("bye 👋");
 }
 

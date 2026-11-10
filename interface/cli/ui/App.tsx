@@ -1,14 +1,13 @@
 /**
- * The halo TUI — an Ink (React for terminals) app, same foundation as
- * Claude Code. Completed turns stream into scrollback via <Static>;
- * the live area shows reasoning + streaming answer + waiting spinner;
- * a boxed composer sits pinned at the bottom.
+ * The halo TUI — full-screen (alternate screen), like Claude Code / Codex.
+ * The whole terminal becomes the harness: a transcript viewport above,
+ * the composer pinned to the bottom row, status line underneath.
  */
-import { Box, Static, Text, useApp, useInput, type Key } from "ink";
+import { Box, Text, useApp, useInput, useStdout, type Key } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MODEL_PRESETS, type ModelRegistry } from "../../../models/registry";
 import type { ChatMessage } from "../../../models/types";
-import { configPath, saveConfig } from "../../../secrets/config";
+import { saveConfig } from "../../../secrets/config";
 import { resolveApiKey } from "../../../secrets/store";
 
 export const SYSTEM_PROMPT =
@@ -45,13 +44,27 @@ export interface AppProps {
   initialPrompt?: string;
 }
 
+/** One renderable row of the transcript viewport. */
+interface Line {
+  prefix?: string;
+  prefixColor?: string;
+  text: string;
+  color?: string;
+  dim?: boolean;
+  italic?: boolean;
+}
+
 export function App({ registry, apiKey, interactive = true, initialPrompt }: AppProps) {
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  const [rows, setRows] = useState(stdout.rows || 24);
+  const [cols, setCols] = useState(stdout.columns || 80);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [live, setLive] = useState<{ reasoning: string; answer: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [modelId, setModelId] = useState(registry.active().id);
+  const [tick, setTick] = useState(0);
 
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -60,6 +73,26 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
   inputRef.current = input;
   const bootRef = useRef(false);
   const initialPendingRef = useRef(initialPrompt != null);
+  const busyStartRef = useRef(0);
+
+  // Follow terminal resizes so the full-screen layout always fits.
+  useEffect(() => {
+    const onResize = () => {
+      setRows(stdout.rows || 24);
+      setCols(stdout.columns || 80);
+    };
+    stdout.on("resize", onResize);
+    return () => {
+      stdout.off("resize", onResize);
+    };
+  }, [stdout]);
+
+  // Spinner + elapsed seconds while waiting/streaming.
+  useEffect(() => {
+    if (!busy) return;
+    const timer = setInterval(() => setTick((t) => t + 1), 120);
+    return () => clearInterval(timer);
+  }, [busy]);
 
   const info = useCallback((content: string) => {
     setTurns((t) => [...t, { role: "info", content }]);
@@ -133,6 +166,8 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
       busyRef.current = true;
       setBusy(true);
       setModelId(registry.active().id);
+      setTick(0);
+      busyStartRef.current = Date.now();
       setLive({ reasoning: "", answer: "" });
 
       const ac = new AbortController();
@@ -140,7 +175,6 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
       let answer = "";
       let reasoning = "";
       let sawOutput = false;
-      const started = Date.now();
       try {
         const auth =
           (await resolveApiKey(registry.active().apiKeyEnv)) ?? {
@@ -163,7 +197,10 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
             : String(err);
         setTurns((t) => [...t, { role: "info", content: msg }]);
       } finally {
-        const seconds = Math.max(1, Math.round((Date.now() - started) / 1000));
+        const seconds = Math.max(
+          1,
+          Math.round((Date.now() - busyStartRef.current) / 1000),
+        );
         const additions: Turn[] = [];
         if (reasoning) additions.push({ role: "thought", seconds });
         if (answer) {
@@ -233,38 +270,43 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
     if (initialPrompt != null) void submitRef.current(initialPrompt);
   }, [initialPrompt]);
 
-  return (
-    <Box flexDirection="column">
-      {interactive && <Keyboard handlerRef={keyRef} />}
-      <Static items={turns}>
-        {(turn, i) => <TurnView key={i} turn={turn} />}
-      </Static>
+  // ---- full-screen layout -------------------------------------------------
+  const frame = FRAMES[tick % FRAMES.length]!;
+  const elapsed = busy
+    ? Math.max(0, Math.round((Date.now() - busyStartRef.current) / 1000))
+    : 0;
+  const width = Math.max(20, cols - 2);
+  const viewportRows = Math.max(1, rows - 4); // 3 rows composer border + 1 status
+  const lines = transcriptLines(turns, live, {
+    width,
+    frame,
+    elapsed,
+    modelId,
+  });
+  const visible = lines.slice(-viewportRows);
 
-      {live && (
-        <Box flexDirection="column">
-          {!live.answer && !live.reasoning && (
-            <WaitingLine label={`waiting · ${modelId}`} />
-          )}
-          {live.reasoning && !live.answer && (
-            <Box flexDirection="column" marginTop={1}>
-              <Text color="yellow">✻ thinking</Text>
-              <Text dimColor>{tailLines(live.reasoning, 4)}</Text>
-            </Box>
-          )}
-          {live.answer.length > 0 && (
-            <Box marginTop={1}>
-              <Text color="cyan">halo ❯ </Text>
-              <Text>{live.answer}</Text>
-            </Box>
-          )}
-        </Box>
-      )}
+  return (
+    <Box flexDirection="column" height={rows} width="100%">
+      <Box
+        flexDirection="column"
+        height={rows - 4}
+        overflow="hidden"
+        justifyContent="flex-end"
+      >
+        {visible.map((line, i) => (
+          <Text key={i}>
+            {line.prefix && <Text color={line.prefixColor}>{line.prefix}</Text>}
+            <Text color={line.color} dimColor={line.dim} italic={line.italic}>
+              {line.text}
+            </Text>
+          </Text>
+        ))}
+      </Box>
 
       <Box
         borderStyle="round"
         borderColor={busy ? "gray" : "cyan"}
         paddingX={1}
-        marginTop={1}
       >
         <Text color={busy ? "gray" : "cyan"}>{busy ? "…" : "❯"} </Text>
         <Text>{input}</Text>
@@ -273,7 +315,7 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
       <Box justifyContent="space-between" width="100%">
         <Text dimColor>{" " + modelId}</Text>
         <Text dimColor>
-          {busy ? "esc to interrupt" : "/help commands · ctrl-c to quit"}{" "}
+          {busy ? "esc to interrupt " : "/help commands · ctrl-c to quit "}
         </Text>
       </Box>
     </Box>
@@ -293,47 +335,117 @@ function Keyboard({
   return null;
 }
 
-/** One completed turn, rendered once into terminal scrollback. */
-function TurnView({ turn }: { turn: Turn }) {
-  switch (turn.role) {
-    case "user":
-      return (
-        <Box marginTop={1}>
-          <Text color="magentaBright">you ❯ </Text>
-          <Text>{turn.content}</Text>
-        </Box>
-      );
-    case "assistant":
-      return (
-        <Text>
-          <Text color="cyan">halo ❯ </Text>
-          {turn.content}
-        </Text>
-      );
-    case "info":
-      return <Text dimColor>· {turn.content}</Text>;
-    case "thought":
-      return <Text dimColor>✻ thought for {turn.seconds}s</Text>;
+/** Greedy word wrap on plain text (long words hard-split). */
+function wrapText(text: string, width: number): string[] {
+  const out: string[] = [];
+  for (const paragraph of text.split("\n")) {
+    if (!paragraph) {
+      out.push("");
+      continue;
+    }
+    let line = "";
+    for (const word of paragraph.split(" ")) {
+      let w = word;
+      if (!line) {
+        while (w.length > width) {
+          out.push(w.slice(0, width));
+          w = w.slice(width);
+        }
+        line = w;
+      } else if ((line + " " + w).length <= width) {
+        line += " " + w;
+      } else {
+        out.push(line);
+        while (w.length > width) {
+          out.push(w.slice(0, width));
+          w = w.slice(width);
+        }
+        line = w;
+      }
+    }
+    out.push(line);
   }
+  return out;
 }
 
-function WaitingLine({ label }: { label: string }) {
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const timer = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  return (
-    <Text>
-      <Text color="cyan">{FRAMES[tick % FRAMES.length]} </Text>
-      <Text dimColor>
-        {label} · {tick}s
-      </Text>
-    </Text>
-  );
+function pushWrapped(
+  lines: Line[],
+  prefix: string,
+  prefixColor: string | undefined,
+  body: string,
+  style: { color?: string; dim?: boolean; italic?: boolean },
+  width: number,
+): void {
+  const firstWidth = Math.max(10, width - prefix.length);
+  const wrapped = wrapText(body, firstWidth);
+  wrapped.forEach((text, i) => {
+    if (i === 0 && prefix) {
+      lines.push({ prefix, prefixColor, text, ...style });
+    } else {
+      lines.push({ prefix: "  ", text, ...style });
+    }
+  });
 }
 
-function tailLines(text: string, count: number): string {
-  const lines = text.split("\n").filter((l) => l.trim().length > 0);
-  return lines.slice(-count).join("\n");
+function tailLines(text: string, count: number): string[] {
+  return text
+    .split("\n")
+    .filter((l) => l.trim().length > 0)
+    .slice(-count);
+}
+
+/** Builds the full transcript as renderable lines (viewport clips the tail). */
+function transcriptLines(
+  turns: Turn[],
+  live: { reasoning: string; answer: string } | null,
+  opts: { width: number; frame: string; elapsed: number; modelId: string },
+): Line[] {
+  const lines: Line[] = [];
+  for (const turn of turns) {
+    lines.push({ text: "" });
+    switch (turn.role) {
+      case "user":
+        pushWrapped(lines, "you ❯ ", "magentaBright", turn.content, {}, opts.width);
+        break;
+      case "assistant":
+        pushWrapped(lines, "halo ❯ ", "cyan", turn.content, {}, opts.width);
+        break;
+      case "info":
+        pushWrapped(lines, "", undefined, `· ${turn.content}`, { dim: true }, opts.width);
+        break;
+      case "thought":
+        pushWrapped(
+          lines,
+          "",
+          undefined,
+          `✻ thought for ${turn.seconds}s`,
+          { dim: true, italic: true },
+          opts.width,
+        );
+        break;
+    }
+  }
+
+  if (live) {
+    lines.push({ text: "" });
+    if (!live.answer && !live.reasoning) {
+      lines.push({
+        prefix: `${opts.frame} `,
+        prefixColor: "cyan",
+        text: `waiting · ${opts.modelId} · ${opts.elapsed}s`,
+        dim: true,
+      });
+    } else {
+      if (live.reasoning && !live.answer) {
+        lines.push({ text: "✻ thinking", color: "yellow" });
+        for (const text of tailLines(live.reasoning, 3)) {
+          lines.push({ text, dim: true });
+        }
+      }
+      if (live.answer) {
+        pushWrapped(lines, "halo ❯ ", "cyan", live.answer, {}, opts.width);
+      }
+    }
+  }
+  return lines;
 }
