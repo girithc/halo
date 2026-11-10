@@ -428,7 +428,10 @@ function transcriptLines(
 ): Line[] {
   const lines: Line[] = [];
   for (const turn of turns) {
-    lines.push({ text: "" }, { text: "" }); // breathing room between turns
+    // Generous spacing: user turns start a new exchange (2 blank lines),
+    // replies and notes get one.
+    const gap = turn.role === "user" ? 2 : 1;
+    for (let i = 0; i < gap; i++) lines.push({ text: "" });
     switch (turn.role) {
       case "user":
         pushWrapped(lines, "you ❯ ", "magentaBright", turn.content, {}, opts.width);
