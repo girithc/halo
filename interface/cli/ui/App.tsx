@@ -47,12 +47,11 @@ export interface AppProps {
 
 export function App({ registry, apiKey, interactive = true, initialPrompt }: AppProps) {
   const { exit } = useApp();
-  const [turns, setTurns] = useState<Turn[]>([
-    { role: "info", content: `halo · ${registry.active().id} · /help for commands` },
-  ]);
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [live, setLive] = useState<{ reasoning: string; answer: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [modelId, setModelId] = useState(registry.active().id);
 
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -82,9 +81,11 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
           const preset = MODEL_PRESETS[args.toLowerCase()];
           if (preset) {
             registry.setConfig(preset);
+            setModelId(registry.active().id);
             info(`✓ ${preset.id} @ ${preset.baseURL} (session only)`);
           } else {
             registry.setModelId(args);
+            setModelId(registry.active().id);
             info(`✓ model set to ${args} (session only — /config persists)`);
           }
           return;
@@ -131,6 +132,7 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
       setTurns((t) => [...t, { role: "user", content: text }]);
       busyRef.current = true;
       setBusy(true);
+      setModelId(registry.active().id);
       setLive({ reasoning: "", answer: "" });
 
       const ac = new AbortController();
@@ -241,7 +243,7 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
       {live && (
         <Box flexDirection="column">
           {!live.answer && !live.reasoning && (
-            <WaitingLine label={`waiting · ${registry.active().id}`} />
+            <WaitingLine label={`waiting · ${modelId}`} />
           )}
           {live.reasoning && !live.answer && (
             <Box flexDirection="column" marginTop={1}>
@@ -271,6 +273,7 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
       <Box>
         <Text dimColor>
           {" "}
+          {modelId} ·{" "}
           {busy
             ? "esc to interrupt"
             : "enter to send · /help commands · ctrl-c to quit"}
