@@ -48,7 +48,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       const json = (await res.json()) as CompletionResponse;
       if (json.error) throw new Error(json.error.message ?? "request failed");
       const content = json.choices?.[0]?.message?.content;
-      if (content) yield { delta: content };
+      if (content) yield { kind: "answer", text: content };
       return;
     }
 
@@ -63,8 +63,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
         continue; // partial fragment — skip
       }
       if (json.error) throw new Error(json.error.message ?? "stream error");
-      const delta = json.choices?.[0]?.delta?.content;
-      if (delta) yield { delta };
+      const delta = json.choices?.[0]?.delta;
+      const reasoning = delta?.reasoning_content ?? delta?.reasoning;
+      if (reasoning) yield { kind: "reasoning", text: reasoning };
+      if (delta?.content) yield { kind: "answer", text: delta.content };
     }
   }
 }
@@ -72,7 +74,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
 type CompletionResponse = {
   error?: { message?: string };
   choices?: Array<{
-    delta?: { content?: string };
+    delta?: { content?: string; reasoning_content?: string; reasoning?: string };
     message?: { content?: string };
   }>;
 };

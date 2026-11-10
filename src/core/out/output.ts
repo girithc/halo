@@ -55,7 +55,9 @@ ${bold("tips")}
 }
 
 export interface StreamView {
-  /** Print the next fragment; lazily stops the spinner and prints the label. */
+  /** Reasoning/thinking fragment — rendered dimmed, live. */
+  reasoning(text: string): void;
+  /** Answer fragment; lazily stops the spinner and prints the label. */
   delta(text: string): void;
   /** Stop the spinner and close the stream block. */
   end(): void;
@@ -63,10 +65,11 @@ export interface StreamView {
 
 /**
  * Spinner while waiting for the first token, then live streaming.
- * One view per response.
+ * Reasoning streams dimmed under a "✻ thinking" header until the first
+ * answer fragment arrives. One view per response.
  */
-export function createStreamView(label = "thinking"): StreamView {
-  let started = false;
+export function createStreamView(label = "waiting"): StreamView {
+  let phase: "idle" | "reasoning" | "answer" = "idle";
   let i = 0;
   const timer = setInterval(() => {
     process.stdout.write(
@@ -80,17 +83,29 @@ export function createStreamView(label = "thinking"): StreamView {
   };
 
   return {
-    delta(text: string) {
-      if (!started) {
+    reasoning(text: string) {
+      if (phase === "idle") {
         stopSpinner();
+        process.stdout.write(`${dim("✻ thinking")}\n`);
+        phase = "reasoning";
+      }
+      process.stdout.write(dim(text));
+    },
+    delta(text: string) {
+      if (phase === "idle") {
+        stopSpinner();
+      } else if (phase === "reasoning") {
+        process.stdout.write("\n"); // close the thinking block
+      }
+      if (phase !== "answer") {
         process.stdout.write(cyan("halo ❯ "));
-        started = true;
+        phase = "answer";
       }
       process.stdout.write(text);
     },
     end() {
       stopSpinner();
-      if (started) process.stdout.write("\n\n");
+      if (phase !== "idle") process.stdout.write("\n\n");
     },
   };
 }

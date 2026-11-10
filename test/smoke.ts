@@ -38,6 +38,7 @@ const server = Bun.serve({
         return Response.json({ error: { message: "bad key" } }, { status: 401 });
       }
       return sse([
+        { choices: [{ delta: { reasoning_content: "pondering" } }] },
         ...CHUNKS.map((piece) => ({
           choices: [{ delta: { content: piece } }],
         })),
@@ -75,26 +76,26 @@ const server = Bun.serve({
 const port = server.port;
 let failures = 0;
 
-// 1. Chat-completions: deltas stream out in order and assemble exactly.
+// 1. Chat-completions: reasoning_content first, then answer deltas in order.
 {
   const provider = new OpenAICompatibleProvider(
     { id: "mock-model", baseURL: `http://localhost:${port}/v1` },
     "test-key",
   );
   let text = "";
-  let chunks = 0;
+  let reasoning = "";
   for await (const chunk of provider.chat(
     [{ role: "user", content: "hi" }],
     new AbortController().signal,
   )) {
-    text += chunk.delta;
-    chunks++;
+    if (chunk.kind === "reasoning") reasoning += chunk.text;
+    else text += chunk.text;
   }
-  if (text !== CHUNKS.join("")) {
-    console.error(`FAIL: got ${JSON.stringify(text)} in ${chunks} chunks`);
+  if (text !== CHUNKS.join("") || reasoning !== "pondering") {
+    console.error(`FAIL: got answer ${JSON.stringify(text)}, reasoning ${JSON.stringify(reasoning)}`);
     failures++;
   } else {
-    console.log(`ok  chat-completions streaming: ${chunks} chunks -> ${JSON.stringify(text)}`);
+    console.log(`ok  chat-completions: reasoning ${JSON.stringify(reasoning)} -> ${JSON.stringify(text)}`);
   }
 }
 
@@ -124,7 +125,7 @@ let failures = 0;
   }
 }
 
-// 3. Meta responses API: typed SSE events assemble; reasoning deltas ignored.
+// 3. Meta responses API: reasoning + answer events separated correctly.
 {
   const meta = new MetaProvider(
     {
@@ -135,6 +136,7 @@ let failures = 0;
     "test-key",
   );
   let text = "";
+  let reasoning = "";
   for await (const chunk of meta.chat(
     [
       { role: "system", content: "be brief" },
@@ -142,13 +144,16 @@ let failures = 0;
     ],
     new AbortController().signal,
   )) {
-    text += chunk.delta;
+    if (chunk.kind === "reasoning") reasoning += chunk.text;
+    else text += chunk.text;
   }
-  if (text !== "Meta works") {
-    console.error(`FAIL: meta stream -> ${JSON.stringify(text)}`);
+  if (text !== "Meta works" || reasoning !== "thinking...") {
+    console.error(
+      `FAIL: meta answer ${JSON.stringify(text)}, reasoning ${JSON.stringify(reasoning)}`,
+    );
     failures++;
   } else {
-    console.log(`ok  meta responses streaming -> ${JSON.stringify(text)}`);
+    console.log(`ok  meta responses: reasoning ${JSON.stringify(reasoning)} -> ${JSON.stringify(text)}`);
   }
 }
 

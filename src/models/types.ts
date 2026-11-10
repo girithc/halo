@@ -10,10 +10,14 @@ export interface ChatMessage {
   content: string;
 }
 
-/** One streamed fragment of the assistant's reply. */
-export interface ChatChunk {
-  delta: string;
-}
+/**
+ * One streamed fragment of the assistant's reply.
+ * Reasoning models stream their thinking first (or interleaved):
+ * renderers show `reasoning` dimmed and `answer` normally.
+ */
+export type ChatChunk =
+  | { kind: "reasoning"; text: string }
+  | { kind: "answer"; text: string };
 
 export interface ModelConfig {
   /** Preset name, e.g. "deepseek" — kept so /config can round-trip it. */

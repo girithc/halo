@@ -95,7 +95,7 @@ async function main(): Promise<void> {
 
   async function send(text: string): Promise<void> {
     history.push({ role: "user", content: text });
-    const view = out.createStreamView(`thinking · ${registry.active().id}`);
+    const view = out.createStreamView(`waiting · ${registry.active().id}`);
     const ac = new AbortController();
     currentRequest = ac;
     let reply = "";
@@ -106,8 +106,12 @@ async function main(): Promise<void> {
       for await (const chunk of registry
         .createProvider(requestAuth.key)
         .chat(history, ac.signal)) {
-        reply += chunk.delta;
-        view.delta(chunk.delta);
+        if (chunk.kind === "reasoning") {
+          view.reasoning(chunk.text);
+        } else {
+          reply += chunk.text;
+          view.delta(chunk.text);
+        }
       }
     } catch (err) {
       if (ac.signal.aborted) {

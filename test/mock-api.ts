@@ -22,6 +22,13 @@ const server = Bun.serve({
       const stream = new ReadableStream({
         async start(controller) {
           const enc = new TextEncoder();
+          // reasoning first, like deepseek-reasoner
+          controller.enqueue(
+            enc.encode(
+              `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "Thinking about the reply..." } }] })}\n\n`,
+            ),
+          );
+          await new Promise((r) => setTimeout(r, 400));
           for (const word of reply.split(/(?<=\s)/)) {
             controller.enqueue(
               enc.encode(
@@ -50,6 +57,13 @@ const server = Bun.serve({
       const stream = new ReadableStream({
         async start(controller) {
           const enc = new TextEncoder();
+          // reasoning first, like a real reasoning model
+          controller.enqueue(
+            enc.encode(
+              `event: response.reasoning_summary_text.delta\ndata: ${JSON.stringify({ type: "response.reasoning_summary_text.delta", delta: "The user greeted me. I'll reply warmly." })}\n\n`,
+            ),
+          );
+          await new Promise((r) => setTimeout(r, 400));
           for (const word of reply.split(/(?<=\s)/)) {
             controller.enqueue(
               enc.encode(

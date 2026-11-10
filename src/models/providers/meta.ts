@@ -52,7 +52,9 @@ export class MetaProvider implements ModelProvider {
       for (const item of json.output ?? []) {
         if (item.type !== "message") continue;
         for (const part of item.content ?? []) {
-          if (part.type === "output_text" && part.text) yield { delta: part.text };
+          if (part.type === "output_text" && part.text) {
+            yield { kind: "answer", text: part.text };
+          }
         }
       }
       return;
@@ -71,7 +73,11 @@ export class MetaProvider implements ModelProvider {
 
       switch (event.type) {
         case "response.output_text.delta":
-          if (event.delta) yield { delta: event.delta };
+          if (event.delta) yield { kind: "answer", text: event.delta };
+          break;
+        case "response.reasoning_summary_text.delta": // summarized thinking
+        case "response.reasoning_text.delta": // raw thinking channel
+          if (event.delta) yield { kind: "reasoning", text: event.delta };
           break;
         case "response.completed":
         case "response.incomplete":
@@ -83,7 +89,7 @@ export class MetaProvider implements ModelProvider {
         case "error":
           throw new Error(errorText(event.error) || event.message || "stream error");
         default:
-          break; // reasoning summaries, output_item.* housekeeping — ignore
+          break; // output_item.* housekeeping — ignore
       }
     }
   }
