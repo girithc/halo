@@ -18,7 +18,8 @@ import {
 import type { ChatMessage, ModelConfig } from "../../models/types";
 import { loadConfig } from "../../secrets/config";
 import { resolveApiKey, type ApiKey } from "../../secrets/store";
-import { App, SYSTEM_PROMPT } from "./ui/App";
+import { App } from "./ui/App";
+import { SYSTEM_PROMPT } from "./ui/useChat";
 
 const VERSION = "0.1.0";
 
