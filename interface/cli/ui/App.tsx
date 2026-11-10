@@ -3,7 +3,7 @@
  * The whole terminal becomes the harness: a transcript viewport above,
  * the composer pinned to the bottom row, status line underneath.
  */
-import { Box, Text, useApp, useInput, useStdout, type Key } from "ink";
+import { Box, Text, useApp, useStdout } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MODEL_PRESETS, type ModelRegistry } from "../../../models/registry";
 import type { ChatMessage } from "../../../models/types";
@@ -231,37 +231,76 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
   const submitRef = useRef(runSubmit);
   submitRef.current = runSubmit;
 
-  const handleKey = (value: string, key: Key): void => {
-    if (key.escape) {
-      if (busyRef.current) abortRef.current?.abort();
-      return;
+  const handleKey = (chunk: string): void => {
+    if (process.env.HALO_KEYDEBUG) {
+      console.error(`[raw] ${JSON.stringify(chunk)}`);
     }
-    if (key.ctrl && value === "c") {
+    if (chunk === "\x03") {
+      // ctrl-c: interrupt the running reply, or quit
       if (busyRef.current) abortRef.current?.abort();
       else exit();
       return;
     }
-    if (busyRef.current) return; // ignore typing mid-stream (v1)
-    if (key.return) {
+    if (chunk === "\x04" && !busyRef.current) {
+      exit(); // ctrl-d
+      return;
+    }
+    if (chunk === "\x1b") {
+      // bare esc: interrupt
+      if (busyRef.current) abortRef.current?.abort();
+      return;
+    }
+    if (chunk.startsWith("\x1b")) return; // arrow/function sequences — ignored (v1)
+    if (chunk === "\x7f" || chunk === "\b") {
+      if (!busyRef.current) setInput((v) => v.slice(0, -1));
+      return;
+    }
+    if (chunk === "\r" || chunk === "\n") {
+      if (busyRef.current) return;
       const text = inputRef.current;
       setInput("");
       void submitRef.current(text);
       return;
     }
-    if (key.backspace || key.delete) {
-      setInput((v) => v.slice(0, -1));
+    if (busyRef.current) return;
+    // Burst-typed or pasted chunks can arrive with the newline embedded:
+    // split and submit the first line, keep any remainder in the composer.
+    const newlineAt = chunk.search(/\r|\n/);
+    if (newlineAt >= 0) {
+      const head = chunk.slice(0, newlineAt);
+      const rest = chunk.slice(newlineAt + 1).replace(/[\r\n]+$/, "");
+      const text = inputRef.current + head;
+      setInput(rest);
+      void submitRef.current(text);
       return;
     }
-    if (
-      key.upArrow || key.downArrow || key.leftArrow || key.rightArrow ||
-      key.tab || key.ctrl || key.meta
-    ) {
-      return;
-    }
-    if (value) setInput((v) => v + value);
+    setInput((v) => v + chunk);
   };
   const keyRef = useRef(handleKey);
   keyRef.current = handleKey;
+
+  // Own raw-mode keyboard handling — ink's useInput is unreliable under Bun.
+  useEffect(() => {
+    if (!interactive) return;
+    const stdin = process.stdin;
+    try {
+      stdin.setRawMode?.(true);
+    } catch {
+      // headless — fine
+    }
+    stdin.resume();
+    stdin.setEncoding("utf8");
+    const onData = (data: string) => keyRef.current(data);
+    stdin.on("data", onData);
+    return () => {
+      stdin.off("data", onData);
+      try {
+        stdin.setRawMode?.(false);
+      } catch {
+        // ignore
+      }
+    };
+  }, [interactive]);
 
   // Auto-send the initial prompt exactly once (UI smoke test uses this).
   useEffect(() => {
@@ -320,19 +359,6 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
       </Box>
     </Box>
   );
-}
-
-/**
- * Keyboard capture in its own component so headless renders
- * (piped stdin, no raw mode) can skip it entirely.
- */
-function Keyboard({
-  handlerRef,
-}: {
-  handlerRef: { current: (value: string, key: Key) => void };
-}) {
-  useInput((value, key) => handlerRef.current(value, key));
-  return null;
 }
 
 /** Greedy word wrap on plain text (long words hard-split). */
@@ -402,7 +428,7 @@ function transcriptLines(
 ): Line[] {
   const lines: Line[] = [];
   for (const turn of turns) {
-    lines.push({ text: "" });
+    lines.push({ text: "" }, { text: "" }); // breathing room between turns
     switch (turn.role) {
       case "user":
         pushWrapped(lines, "you ❯ ", "magentaBright", turn.content, {}, opts.width);

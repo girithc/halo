@@ -54,8 +54,6 @@ async function main(): Promise<void> {
   };
   const registry = new ModelRegistry(base);
 
-  const reader = new InputReader(() => process.exit(0)); // used by the wizard
-
   // Credentials: stored keys first; otherwise the first-run wizard (TTY only).
   let auth: ApiKey | null = await resolveApiKey(base.apiKeyEnv);
   if (!auth && needsApiKey(base)) {
@@ -65,8 +63,12 @@ async function main(): Promise<void> {
           " (or run `halo` in a terminal to set one up)",
       );
     }
+    // The readline reader must live ONLY while the wizard runs — leaving it
+    // open would compete with Ink for stdin keystrokes.
+    const reader = new InputReader(() => process.exit(0));
     const { runOnboarding } = await import("./onboard");
     const result = await runOnboarding(reader);
+    reader.close();
     registry.setConfig(result.config);
     auth = {
       key: result.apiKey ?? "local",
@@ -81,7 +83,6 @@ async function main(): Promise<void> {
   if (oneShot.length > 0) {
     // Plain non-interactive mode: one request, streamed to stdout.
     await plainSend(registry, apiKey, oneShot.join(" "));
-    reader.close();
     return;
   }
 
