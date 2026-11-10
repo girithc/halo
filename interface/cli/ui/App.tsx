@@ -1,7 +1,14 @@
 /**
- * The halo TUI — full-screen (alternate screen), like Claude Code / Codex.
- * The whole terminal becomes the harness: a transcript viewport above,
- * the composer pinned to the bottom row, status line underneath.
+ * The halo chat UI — full-screen (alternate screen).
+ *
+ * Architecture is deliberately simple:
+ *   messages  <- the chat data. The UI only reads this; every change is a
+ *                setState, and React repaints the sections above the input bar.
+ *   draft     <- what's typed in the input bar.
+ *   busy      <- spinner/elapsed status while the reply streams.
+ *
+ * Actions: sendMessage() streams the reply into `messages`,
+ * runCommand() handles /commands, everything else is keyboard plumbing.
  */
 import { Box, Text, useApp, useStdout } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -29,11 +36,13 @@ const HELP_TEXT = [
   "  ctrl-c                interrupt (or quit when idle)",
 ].join("\n");
 
-export type Turn =
-  | { role: "user"; content: string }
-  | { role: "assistant"; content: string }
-  | { role: "info"; content: string }
-  | { role: "thought"; seconds: number };
+/** One entry in the chat data. The UI is a pure function of this. */
+export interface ChatEntry {
+  id: number;
+  role: "user" | "assistant" | "info" | "thought";
+  text: string;
+  seconds?: number;
+}
 
 export interface AppProps {
   registry: ModelRegistry;
@@ -44,7 +53,7 @@ export interface AppProps {
   initialPrompt?: string;
 }
 
-/** One renderable row of the transcript viewport. */
+/** One renderable row (prefix + styled text). */
 interface Line {
   prefix?: string;
   prefixColor?: string;
@@ -57,69 +66,73 @@ interface Line {
 export function App({ registry, apiKey, interactive = true, initialPrompt }: AppProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
+
+  // ---- chat data ----------------------------------------------------------
+  const [messages, setMessages] = useState<ChatEntry[]>([]);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [tick, setTick] = useState(0);
   const [rows, setRows] = useState(stdout.rows || 24);
   const [cols, setCols] = useState(stdout.columns || 80);
-  const [turns, setTurns] = useState<Turn[]>([]);
-  const [input, setInput] = useState("");
-  const [live, setLive] = useState<{ reasoning: string; answer: string } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [modelId, setModelId] = useState(registry.active().id);
-  const [tick, setTick] = useState(0);
 
+  const nextId = useRef(1);
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const startedRef = useRef(0);
+  const draftRef = useRef("");
+  draftRef.current = draft;
   const historyRef = useRef<ChatMessage[]>([{ role: "system", content: SYSTEM_PROMPT }]);
-  const inputRef = useRef("");
-  inputRef.current = input;
   const bootRef = useRef(false);
   const initialPendingRef = useRef(initialPrompt != null);
-  const busyStartRef = useRef(0);
 
-  // Follow terminal resizes so the full-screen layout always fits.
-  useEffect(() => {
-    const onResize = () => {
-      setRows(stdout.rows || 24);
-      setCols(stdout.columns || 80);
-    };
-    stdout.on("resize", onResize);
-    return () => {
-      stdout.off("resize", onResize);
-    };
-  }, [stdout]);
-
-  // Spinner + elapsed seconds while waiting/streaming.
-  useEffect(() => {
-    if (!busy) return;
-    const timer = setInterval(() => setTick((t) => t + 1), 120);
-    return () => clearInterval(timer);
-  }, [busy]);
-
-  const info = useCallback((content: string) => {
-    setTurns((t) => [...t, { role: "info", content }]);
+  const addMessage = useCallback((entry: Omit<ChatEntry, "id">) => {
+    const id = nextId.current++;
+    setMessages((all) => [...all, { ...entry, id }]);
   }, []);
 
+  /** Grow the last assistant message in place as chunks arrive. */
+  const updateLastAssistant = useCallback((text: string) => {
+    setMessages((all) => {
+      const idx = all.map((m) => m.role).lastIndexOf("assistant");
+      if (idx === -1) return all;
+      const next = [...all];
+      next[idx] = { ...next[idx]!, text };
+      return next;
+    });
+  }, []);
+
+  const dropLastAssistant = useCallback(() => {
+    setMessages((all) => {
+      const idx = all.map((m) => m.role).lastIndexOf("assistant");
+      if (idx === -1) return all;
+      return [...all.slice(0, idx), ...all.slice(idx + 1)];
+    });
+  }, []);
+
+  // ---- actions ------------------------------------------------------------
   const runCommand = useCallback(
     async (text: string) => {
       const [name = "", ...rest] = text.slice(1).split(/\s+/);
       const args = rest.join(" ");
       switch (name.toLowerCase()) {
         case "help":
-          info(HELP_TEXT);
+          addMessage({ role: "info", text: HELP_TEXT });
           return;
         case "model": {
           if (!args) {
-            info(`active model: ${registry.active().id} @ ${registry.active().baseURL}`);
+            addMessage({
+              role: "info",
+              text: `active model: ${registry.active().id} @ ${registry.active().baseURL}`,
+            });
             return;
           }
           const preset = MODEL_PRESETS[args.toLowerCase()];
           if (preset) {
             registry.setConfig(preset);
-            setModelId(registry.active().id);
-            info(`✓ ${preset.id} @ ${preset.baseURL} (session only)`);
+            addMessage({ role: "info", text: `✓ ${preset.id} @ ${preset.baseURL} (session only)` });
           } else {
             registry.setModelId(args);
-            setModelId(registry.active().id);
-            info(`✓ model set to ${args} (session only — /config persists)`);
+            addMessage({ role: "info", text: `✓ model set to ${args} (session only — /config persists)` });
           }
           return;
         }
@@ -133,12 +146,12 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
             apiKeyEnv: active.apiKeyEnv,
             reasoningEffort: active.reasoningEffort,
           });
-          info(`✓ saved ${active.id} → ${path}`);
+          addMessage({ role: "info", text: `✓ saved ${active.id} → ${path}` });
           return;
         }
         case "clear":
           historyRef.current = [{ role: "system", content: SYSTEM_PROMPT }];
-          setTurns([{ role: "info", content: "conversation history cleared" }]);
+          setMessages([]);
           return;
         case "quit":
         case "exit":
@@ -146,13 +159,12 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
           exit();
           return;
         default:
-          info(`unknown command /${name} — try /help`);
+          addMessage({ role: "info", text: `unknown command /${name} — try /help` });
       }
     },
-    [registry, info, exit],
+    [registry, addMessage, exit],
   );
-
-  const runSubmit = useCallback(
+  const sendMessage = useCallback(
     async (raw: string) => {
       const text = raw.trim();
       if (!text || busyRef.current) return;
@@ -161,20 +173,18 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
         return;
       }
 
+      addMessage({ role: "user", text });
       historyRef.current.push({ role: "user", content: text });
-      setTurns((t) => [...t, { role: "user", content: text }]);
+      addMessage({ role: "assistant", text: "" }); // fills in as chunks arrive
       busyRef.current = true;
       setBusy(true);
-      setModelId(registry.active().id);
       setTick(0);
-      busyStartRef.current = Date.now();
-      setLive({ reasoning: "", answer: "" });
+      startedRef.current = Date.now();
 
       const ac = new AbortController();
       abortRef.current = ac;
-      let answer = "";
-      let reasoning = "";
-      let sawOutput = false;
+      let reply = "";
+      let reasoning = false;
       try {
         const auth =
           (await resolveApiKey(registry.active().apiKeyEnv)) ?? {
@@ -184,10 +194,11 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
         for await (const chunk of registry
           .createProvider(auth.key)
           .chat(historyRef.current, ac.signal)) {
-          sawOutput = true;
-          if (chunk.kind === "reasoning") reasoning += chunk.text;
-          else answer += chunk.text;
-          setLive({ reasoning, answer });
+          if (chunk.kind === "reasoning") reasoning = true;
+          else {
+            reply += chunk.text;
+            updateLastAssistant(reply);
+          }
         }
       } catch (err) {
         const msg = ac.signal.aborted
@@ -195,27 +206,21 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
           : err instanceof Error
             ? err.message
             : String(err);
-        setTurns((t) => [...t, { role: "info", content: msg }]);
+        addMessage({ role: "info", text: msg });
       } finally {
         const seconds = Math.max(
           1,
-          Math.round((Date.now() - busyStartRef.current) / 1000),
+          Math.round((Date.now() - startedRef.current) / 1000),
         );
-        const additions: Turn[] = [];
-        if (reasoning) additions.push({ role: "thought", seconds });
-        if (answer) {
-          historyRef.current.push({ role: "assistant", content: answer });
-          additions.push({ role: "assistant", content: answer });
-        } else if (!ac.signal.aborted) {
-          additions.push({
-            role: "info",
-            content: sawOutput
-              ? "(the model thought, but sent no answer text)"
-              : "(no answer received — run HALO_DEBUG=1 halo to inspect the raw stream)",
-          });
+        if (reply) {
+          historyRef.current.push({ role: "assistant", content: reply });
+          if (reasoning) addMessage({ role: "thought", text: "", seconds });
+        } else {
+          dropLastAssistant(); // nothing arrived — don't leave an empty bubble
+          if (!ac.signal.aborted) {
+            addMessage({ role: "info", text: "(no answer received)" });
+          }
         }
-        setTurns((t) => [...t, ...additions]);
-        setLive(null);
         setBusy(false);
         busyRef.current = false;
         abortRef.current = null;
@@ -225,61 +230,59 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
         }
       }
     },
-    [registry, apiKey, runCommand, exit],
+    [registry, apiKey, runCommand, addMessage, updateLastAssistant, dropLastAssistant, exit],
   );
 
-  const submitRef = useRef(runSubmit);
-  submitRef.current = runSubmit;
+  const commandRef = useRef(runCommand);
+  commandRef.current = runCommand;
 
+  // ---- keyboard -----------------------------------------------------------
   const handleKey = (chunk: string): void => {
     if (process.env.HALO_KEYDEBUG) {
       console.error(`[raw] ${JSON.stringify(chunk)}`);
     }
     if (chunk === "\x03") {
-      // ctrl-c: interrupt the running reply, or quit
       if (busyRef.current) abortRef.current?.abort();
       else exit();
       return;
     }
     if (chunk === "\x04" && !busyRef.current) {
-      exit(); // ctrl-d
+      exit();
       return;
     }
     if (chunk === "\x1b") {
-      // bare esc: interrupt
       if (busyRef.current) abortRef.current?.abort();
       return;
     }
     if (chunk.startsWith("\x1b")) return; // arrow/function sequences — ignored (v1)
     if (chunk === "\x7f" || chunk === "\b") {
-      if (!busyRef.current) setInput((v) => v.slice(0, -1));
+      if (!busyRef.current) setDraft((d) => d.slice(0, -1));
       return;
     }
     if (chunk === "\r" || chunk === "\n") {
       if (busyRef.current) return;
-      const text = inputRef.current;
-      setInput("");
-      void submitRef.current(text);
+      const text = draftRef.current;
+      setDraft("");
+      void sendMessage(text);
       return;
     }
     if (busyRef.current) return;
-    // Burst-typed or pasted chunks can arrive with the newline embedded:
-    // split and submit the first line, keep any remainder in the composer.
+    // Burst/paste chunks can carry the newline inline: submit first line,
+    // keep any remainder in the composer.
     const newlineAt = chunk.search(/\r|\n/);
     if (newlineAt >= 0) {
       const head = chunk.slice(0, newlineAt);
       const rest = chunk.slice(newlineAt + 1).replace(/[\r\n]+$/, "");
-      const text = inputRef.current + head;
-      setInput(rest);
-      void submitRef.current(text);
+      const text = draftRef.current + head;
+      setDraft(rest);
+      void sendMessage(text);
       return;
     }
-    setInput((v) => v + chunk);
+    setDraft((d) => d + chunk);
   };
   const keyRef = useRef(handleKey);
   keyRef.current = handleKey;
 
-  // Own raw-mode keyboard handling — ink's useInput is unreliable under Bun.
   useEffect(() => {
     if (!interactive) return;
     const stdin = process.stdin;
@@ -302,37 +305,56 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
     };
   }, [interactive]);
 
+  // Follow terminal resizes so the full-screen layout always fits.
+  useEffect(() => {
+    const onResize = () => {
+      setRows(stdout.rows || 24);
+      setCols(stdout.columns || 80);
+    };
+    stdout.on("resize", onResize);
+    return () => {
+      stdout.off("resize", onResize);
+    };
+  }, [stdout]);
+
+  // Spinner while waiting for the model.
+  useEffect(() => {
+    if (!busy) return;
+    const timer = setInterval(() => setTick((t) => t + 1), 120);
+    return () => clearInterval(timer);
+  }, [busy]);
+
   // Auto-send the initial prompt exactly once (UI smoke test uses this).
   useEffect(() => {
     if (bootRef.current) return;
     bootRef.current = true;
-    if (initialPrompt != null) void submitRef.current(initialPrompt);
-  }, [initialPrompt]);
+    if (initialPrompt != null) void sendMessage(initialPrompt);
+  }, [initialPrompt, sendMessage]);
 
-  // ---- full-screen layout -------------------------------------------------
+  // ---- layout: chat section above, input bar pinned to the bottom ---------
   const frame = FRAMES[tick % FRAMES.length]!;
   const elapsed = busy
-    ? Math.max(0, Math.round((Date.now() - busyStartRef.current) / 1000))
+    ? Math.max(0, Math.round((Date.now() - startedRef.current) / 1000))
     : 0;
   const width = Math.max(20, cols - 2);
-  const viewportRows = Math.max(1, rows - 4); // 3 rows composer border + 1 status
-  const lines = transcriptLines(turns, live, {
+  const lines = renderChat(messages, {
     width,
+    busy,
     frame,
     elapsed,
-    modelId,
+    modelId: registry.active().id,
   });
-  const visible = lines.slice(-viewportRows);
+  const viewportRows = Math.max(1, rows - 4); // 3 rows composer border + 1 status row
 
   return (
     <Box flexDirection="column" height={rows} width="100%">
       <Box
         flexDirection="column"
-        height={rows - 4}
+        height={viewportRows}
         overflow="hidden"
         justifyContent="flex-end"
       >
-        {visible.map((line, i) => (
+        {lines.slice(-viewportRows).map((line, i) => (
           <Text key={i}>
             {line.prefix && <Text color={line.prefixColor}>{line.prefix}</Text>}
             <Text color={line.color} dimColor={line.dim} italic={line.italic}>
@@ -342,17 +364,13 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
         ))}
       </Box>
 
-      <Box
-        borderStyle="round"
-        borderColor={busy ? "gray" : "cyan"}
-        paddingX={1}
-      >
+      <Box borderStyle="round" borderColor={busy ? "gray" : "cyan"} paddingX={1}>
         <Text color={busy ? "gray" : "cyan"}>{busy ? "…" : "❯"} </Text>
-        <Text>{input}</Text>
+        <Text>{draft}</Text>
         {!busy && <Text backgroundColor="white"> </Text>}
       </Box>
       <Box justifyContent="space-between" width="100%">
-        <Text dimColor>{" " + modelId}</Text>
+        <Text dimColor>{" " + registry.active().id}</Text>
         <Text dimColor>
           {busy ? "esc to interrupt " : "/help commands · ctrl-c to quit "}
         </Text>
@@ -360,6 +378,59 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
     </Box>
   );
 }
+
+// ---- rendering: chat data -> lines -----------------------------------------
+
+/** Renders the chat data as lines (prefixes, colors, spacing). */
+function renderChat(
+  messages: ChatEntry[],
+  opts: {
+    width: number;
+    busy: boolean;
+    frame: string;
+    elapsed: number;
+    modelId: string;
+  },
+): Line[] {
+  const lines: Line[] = [];
+  for (const m of messages) {
+    const gap = m.role === "user" ? 2 : 1;
+    for (let i = 0; i < gap; i++) lines.push({ text: "" });
+    switch (m.role) {
+      case "user":
+        pushWrapped(lines, "you ❯ ", "magentaBright", m.text, {}, opts.width);
+        break;
+      case "assistant":
+        if (m.text) pushWrapped(lines, "halo ❯ ", "cyan", m.text, {}, opts.width);
+        break;
+      case "info":
+        pushWrapped(lines, "", undefined, `· ${m.text}`, { dim: true }, opts.width);
+        break;
+      case "thought":
+        pushWrapped(
+          lines,
+          "",
+          undefined,
+          `✻ thought for ${m.seconds ?? 1}s`,
+          { dim: true, italic: true },
+          opts.width,
+        );
+        break;
+    }
+  }
+  if (opts.busy) {
+    const thinking = messages[messages.length - 1]?.role === "assistant";
+    lines.push({
+      prefix: `${opts.frame} `,
+      prefixColor: "cyan",
+      text: thinking ? "✻ thinking" : `waiting · ${opts.modelId} · ${opts.elapsed}s`,
+      dim: true,
+    });
+  }
+  return lines;
+}
+
+// ---- text helpers -----------------------------------------------------------
 
 /** Greedy word wrap on plain text (long words hard-split). */
 function wrapText(text: string, width: number): string[] {
@@ -411,70 +482,4 @@ function pushWrapped(
       lines.push({ prefix: "  ", text, ...style });
     }
   });
-}
-
-function tailLines(text: string, count: number): string[] {
-  return text
-    .split("\n")
-    .filter((l) => l.trim().length > 0)
-    .slice(-count);
-}
-
-/** Builds the full transcript as renderable lines (viewport clips the tail). */
-function transcriptLines(
-  turns: Turn[],
-  live: { reasoning: string; answer: string } | null,
-  opts: { width: number; frame: string; elapsed: number; modelId: string },
-): Line[] {
-  const lines: Line[] = [];
-  for (const turn of turns) {
-    // Generous spacing: user turns start a new exchange (2 blank lines),
-    // replies and notes get one.
-    const gap = turn.role === "user" ? 2 : 1;
-    for (let i = 0; i < gap; i++) lines.push({ text: "" });
-    switch (turn.role) {
-      case "user":
-        pushWrapped(lines, "you ❯ ", "magentaBright", turn.content, {}, opts.width);
-        break;
-      case "assistant":
-        pushWrapped(lines, "halo ❯ ", "cyan", turn.content, {}, opts.width);
-        break;
-      case "info":
-        pushWrapped(lines, "", undefined, `· ${turn.content}`, { dim: true }, opts.width);
-        break;
-      case "thought":
-        pushWrapped(
-          lines,
-          "",
-          undefined,
-          `✻ thought for ${turn.seconds}s`,
-          { dim: true, italic: true },
-          opts.width,
-        );
-        break;
-    }
-  }
-
-  if (live) {
-    lines.push({ text: "" });
-    if (!live.answer && !live.reasoning) {
-      lines.push({
-        prefix: `${opts.frame} `,
-        prefixColor: "cyan",
-        text: `waiting · ${opts.modelId} · ${opts.elapsed}s`,
-        dim: true,
-      });
-    } else {
-      if (live.reasoning && !live.answer) {
-        lines.push({ text: "✻ thinking", color: "yellow" });
-        for (const text of tailLines(live.reasoning, 3)) {
-          lines.push({ text, dim: true });
-        }
-      }
-      if (live.answer) {
-        pushWrapped(lines, "halo ❯ ", "cyan", live.answer, {}, opts.width);
-      }
-    }
-  }
-  return lines;
 }
