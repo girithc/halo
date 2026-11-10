@@ -270,13 +270,10 @@ export function App({ registry, apiKey, interactive = true, initialPrompt }: App
         <Text>{input}</Text>
         {!busy && <Text backgroundColor="white"> </Text>}
       </Box>
-      <Box>
+      <Box justifyContent="space-between" width="100%">
+        <Text dimColor>{" " + modelId}</Text>
         <Text dimColor>
-          {" "}
-          {modelId} ·{" "}
-          {busy
-            ? "esc to interrupt"
-            : "/help commands · ctrl-c to quit"}
+          {busy ? "esc to interrupt" : "/help commands · ctrl-c to quit"}{" "}
         </Text>
       </Box>
     </Box>
