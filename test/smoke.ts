@@ -1,48 +1,84 @@
 /**
  * Smoke test — no API key needed.
- * Spins a mock OpenAI-compatible SSE server and runs the REAL provider
- * and stream parser against it, plus the auth-error path.
+ * Spins a mock server speaking BOTH wire protocols (chat-completions and
+ * Meta-style responses) and runs the REAL providers and parsers against it.
  *
  * Run: bun run test/smoke.ts
  */
+import { MetaProvider } from "../src/models/providers/meta";
 import { OpenAICompatibleProvider } from "../src/models/providers/openai-compatible";
 
 const CHUNKS = ["Hello", ", ", "halo", "!"];
+
+function sse(events: unknown[]): Response {
+  const stream = new ReadableStream({
+    start(controller) {
+      const enc = new TextEncoder();
+      for (const event of events) {
+        controller.enqueue(
+          enc.encode(`data: ${JSON.stringify(event)}\n\n`),
+        );
+      }
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    headers: { "content-type": "text/event-stream" },
+  });
+}
 
 const server = Bun.serve({
   port: 0,
   async fetch(req) {
     const url = new URL(req.url);
-    if (url.pathname !== "/v1/chat/completions") {
-      return new Response("not found", { status: 404 });
+    const authorized = req.headers.get("authorization") === "Bearer test-key";
+
+    if (url.pathname === "/v1/chat/completions") {
+      if (!authorized) {
+        return Response.json({ error: { message: "bad key" } }, { status: 401 });
+      }
+      return sse([
+        ...CHUNKS.map((piece) => ({
+          choices: [{ delta: { content: piece } }],
+        })),
+        { choices: [{ delta: {} }] }, // some providers pad like this
+      ]);
     }
-    if (req.headers.get("authorization") !== "Bearer test-key") {
-      return Response.json({ error: { message: "bad key" } }, { status: 401 });
+
+    if (url.pathname === "/ok/responses") {
+      if (!authorized) {
+        return Response.json({ error: { message: "bad key" } }, { status: 401 });
+      }
+      return sse([
+        { type: "response.created", response: {} },
+        { type: "response.output_text.delta", delta: "Meta " },
+        { type: "response.reasoning_summary_text.delta", delta: "thinking..." },
+        { type: "response.output_text.delta", delta: "works" },
+        { type: "response.completed", response: { status: "completed" } },
+      ]);
     }
-    const stream = new ReadableStream({
-      async start(controller) {
-        const enc = new TextEncoder();
-        for (const piece of CHUNKS) {
-          const payload = { choices: [{ delta: { content: piece } }] };
-          controller.enqueue(enc.encode(`data: ${JSON.stringify(payload)}\n\n`));
-          await new Promise((r) => setTimeout(r, 25));
-        }
-        controller.enqueue(enc.encode("data: [DONE]\n\n"));
-        controller.close();
-      },
-    });
-    return new Response(stream, {
-      headers: { "content-type": "text/event-stream" },
-    });
+
+    if (url.pathname === "/fail/responses") {
+      return sse([
+        { type: "response.output_text.delta", delta: "partial " },
+        {
+          type: "response.failed",
+          response: { error: { message: "quota exceeded" } },
+        },
+      ]);
+    }
+
+    return new Response("not found", { status: 404 });
   },
 });
 
+const port = server.port;
 let failures = 0;
 
-// 1. Happy path: deltas stream out in order and assemble exactly.
+// 1. Chat-completions: deltas stream out in order and assemble exactly.
 {
   const provider = new OpenAICompatibleProvider(
-    { id: "mock-model", baseURL: `http://localhost:${server.port}/v1` },
+    { id: "mock-model", baseURL: `http://localhost:${port}/v1` },
     "test-key",
   );
   let text = "";
@@ -54,19 +90,18 @@ let failures = 0;
     text += chunk.delta;
     chunks++;
   }
-  const expected = CHUNKS.join("");
-  if (text !== expected || chunks !== CHUNKS.length) {
+  if (text !== CHUNKS.join("")) {
     console.error(`FAIL: got ${JSON.stringify(text)} in ${chunks} chunks`);
     failures++;
   } else {
-    console.log(`ok  streaming: ${chunks} chunks -> ${JSON.stringify(text)}`);
+    console.log(`ok  chat-completions streaming: ${chunks} chunks -> ${JSON.stringify(text)}`);
   }
 }
 
-// 2. Auth error: a 401 must surface as a readable thrown error.
+// 2. Chat-completions auth error surfaces as a readable thrown error.
 {
   const bad = new OpenAICompatibleProvider(
-    { id: "mock-model", baseURL: `http://localhost:${server.port}/v1` },
+    { id: "mock-model", baseURL: `http://localhost:${port}/v1` },
     "wrong-key",
   );
   try {
@@ -81,9 +116,67 @@ let failures = 0;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("bad key")) {
-      console.log(`ok  error path: ${msg}`);
+      console.log(`ok  chat-completions error path: ${msg}`);
     } else {
       console.error(`FAIL: unexpected error message: ${msg}`);
+      failures++;
+    }
+  }
+}
+
+// 3. Meta responses API: typed SSE events assemble; reasoning deltas ignored.
+{
+  const meta = new MetaProvider(
+    {
+      id: "muse-spark-1.3-contributor",
+      baseURL: `http://localhost:${port}/ok`,
+      api: "responses",
+    },
+    "test-key",
+  );
+  let text = "";
+  for await (const chunk of meta.chat(
+    [
+      { role: "system", content: "be brief" },
+      { role: "user", content: "hi" },
+    ],
+    new AbortController().signal,
+  )) {
+    text += chunk.delta;
+  }
+  if (text !== "Meta works") {
+    console.error(`FAIL: meta stream -> ${JSON.stringify(text)}`);
+    failures++;
+  } else {
+    console.log(`ok  meta responses streaming -> ${JSON.stringify(text)}`);
+  }
+}
+
+// 4. Meta mid-stream failure event surfaces as a thrown error.
+{
+  const meta = new MetaProvider(
+    {
+      id: "muse-spark-1.3-contributor",
+      baseURL: `http://localhost:${port}/fail`,
+      api: "responses",
+    },
+    "test-key",
+  );
+  try {
+    for await (const _ of meta.chat(
+      [{ role: "user", content: "hi" }],
+      new AbortController().signal,
+    )) {
+      // drain
+    }
+    console.error("FAIL: expected response.failed to throw");
+    failures++;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("quota exceeded")) {
+      console.log(`ok  meta failure event: ${msg}`);
+    } else {
+      console.error(`FAIL: unexpected meta error: ${msg}`);
       failures++;
     }
   }

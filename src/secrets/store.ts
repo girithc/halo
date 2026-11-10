@@ -3,7 +3,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /** Key names halo looks for, in order. */
-const ENV_KEYS = ["HALO_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"] as const;
+const ENV_KEYS = [
+  "HALO_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "OPENAI_API_KEY",
+  "META_API_KEY",
+] as const;
 
 function haloDir(): string {
   return join(homedir(), ".halo");
@@ -50,16 +55,20 @@ export async function loadHaloEnv(): Promise<Record<string, string>> {
 }
 
 /**
- * Finds an API key: process.env first (Bun auto-loads any project .env),
- * then the machine-wide ~/.halo/.env store.
+ * Finds an API key. `prefer` lists env names the active provider likes
+ * (e.g. META_API_KEY for api.meta.ai); those are checked first, then
+ * every known name. Env beats file at each step.
  */
-export async function resolveApiKey(): Promise<ApiKey | null> {
-  for (const name of ENV_KEYS) {
+export async function resolveApiKey(
+  prefer: readonly string[] = [],
+): Promise<ApiKey | null> {
+  const order = [...prefer, ...ENV_KEYS.filter((k) => !prefer.includes(k))];
+  for (const name of order) {
     const fromEnv = process.env[name];
     if (fromEnv) return { key: fromEnv, source: name };
   }
   const file = await loadHaloEnv();
-  for (const name of ENV_KEYS) {
+  for (const name of order) {
     const fromFile = file[name];
     if (fromFile) return { key: fromFile, source: envFilePath() };
   }

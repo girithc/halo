@@ -12,7 +12,8 @@ const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "
 
 export function banner(model: ModelConfig, keySource: string | null): void {
   console.log();
-  console.log(bold("◐ halo") + dim(` · ${model.id} · ${model.baseURL}`));
+  const kind = model.api === "responses" ? " · responses-api" : "";
+  console.log(bold("◐ halo") + dim(` · ${model.id}${kind} · ${model.baseURL}`));
   if (keySource) console.log(dim(`  key from ${keySource}`));
   console.log(dim("  /help for commands · ctrl-c to exit"));
 }

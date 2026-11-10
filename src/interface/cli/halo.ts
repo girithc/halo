@@ -26,6 +26,12 @@ const SYSTEM_PROMPT =
   "You are halo, a concise terminal coding agent. " +
   "Answer in plain text, use fenced code blocks for code, and keep it short.";
 
+function parseApi(value: string | undefined): ModelConfig["api"] {
+  return value === "responses" || value === "chat-completions"
+    ? value
+    : undefined;
+}
+
 async function main(): Promise<void> {
   const flags = process.argv.slice(2);
   if (flags.some((a) => a === "-h" || a === "--help")) {
@@ -42,6 +48,7 @@ async function main(): Promise<void> {
   const base: ModelConfig = {
     id: process.env.HALO_MODEL ?? stored.model ?? DEFAULT_MODEL.id,
     baseURL: process.env.HALO_BASE_URL ?? stored.baseURL ?? DEFAULT_MODEL.baseURL,
+    api: parseApi(process.env.HALO_API) ?? stored.api,
   };
   const registry = new ModelRegistry(base);
 
@@ -78,7 +85,15 @@ async function main(): Promise<void> {
     currentRequest = ac;
     let reply = "";
     try {
-      for await (const chunk of registry.createProvider(apiKey).chat(history, ac.signal)) {
+      // Re-resolve per request so /model switches pick the right key.
+      const auth =
+        (await resolveApiKey(registry.active().apiKeyEnv)) ?? {
+          key: apiKey,
+          source: "session",
+        };
+      for await (const chunk of registry
+        .createProvider(auth.key)
+        .chat(history, ac.signal)) {
         reply += chunk.delta;
         view.delta(chunk.delta);
       }
@@ -125,6 +140,7 @@ async function main(): Promise<void> {
         const path = await saveConfig({
           model: registry.active().id,
           baseURL: registry.active().baseURL,
+          api: registry.active().api,
         });
         out.success(`saved ${registry.active().id} → ${path}`);
         return;

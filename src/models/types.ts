@@ -15,12 +15,19 @@ export interface ChatChunk {
   delta: string;
 }
 
-/** Where a model lives and what it is called. */
 export interface ModelConfig {
   /** Model id exactly as the provider API expects it, e.g. "deepseek-chat". */
   id: string;
-  /** OpenAI-compatible base URL, e.g. "https://api.deepseek.com/v1". */
+  /** Base URL, e.g. "https://api.deepseek.com/v1". */
   baseURL: string;
+  /**
+   * Wire protocol the endpoint speaks:
+   *  - "chat-completions" (default): POST {base}/chat/completions with `messages`
+   *  - "responses": POST {base}/responses with `input`, typed SSE events (Meta)
+   */
+  api?: "chat-completions" | "responses";
+  /** Env var names that hold this provider's key, checked first. */
+  apiKeyEnv?: string[];
 }
 
 /** Any chat backend that can stream a reply. */

@@ -9,6 +9,7 @@ import type { ModelProvider } from "./models/types";
 import { resolveApiKey } from "./secrets/store";
 
 export { DEFAULT_MODEL, MODEL_PRESETS, ModelRegistry } from "./models/registry";
+export { MetaProvider } from "./models/providers/meta";
 export { parseInput, InputReader, CANCEL } from "./core/in/input";
 export * as out from "./core/out/output";
 export { resolveApiKey, saveApiKey, maskKey } from "./secrets/store";

@@ -6,6 +6,7 @@ import { join } from "node:path";
 export interface HaloConfig {
   model?: string;
   baseURL?: string;
+  api?: "chat-completions" | "responses";
 }
 
 function configDir(): string {
