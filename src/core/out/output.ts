@@ -3,6 +3,9 @@ import type { ModelConfig } from "../../models/types";
 const RESET = "\x1b[0m";
 export const dim = (s: string) => `${DIM}${s}${RESET}`;
 export const bold = (s: string) => `\x1b[1m${s}${RESET}`;
+/** Readable gray — dimmer than the answer, but legible on dark terminals. */
+export const gray = (s: string) => `\x1b[90m${s}${RESET}`;
+const yellow = (s: string) => `\x1b[33m${s}${RESET}`;
 const green = (s: string) => `\x1b[32m${s}${RESET}`;
 const red = (s: string) => `\x1b[31m${s}${RESET}`;
 const cyan = (s: string) => `\x1b[36m${s}${RESET}`;
@@ -86,10 +89,10 @@ export function createStreamView(label = "waiting"): StreamView {
     reasoning(text: string) {
       if (phase === "idle") {
         stopSpinner();
-        process.stdout.write(`${dim("✻ thinking")}\n`);
+        process.stdout.write(`${yellow("✻ thinking")}\n`);
         phase = "reasoning";
       }
-      process.stdout.write(dim(text));
+      process.stdout.write(gray(text));
     },
     delta(text: string) {
       if (phase === "idle") {

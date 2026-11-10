@@ -1,6 +1,16 @@
 /** Shared wire-protocol plumbing for model providers. */
 
 /**
+ * When HALO_DEBUG=1, every raw SSE line is echoed to stderr —
+ * the fastest way to see what a provider really sends.
+ */
+export function sseDebug(line: string): void {
+  if (process.env.HALO_DEBUG) {
+    console.error(`\x1b[90m[sse] ${line}\x1b[0m`);
+  }
+}
+
+/**
  * Yields the payload of every `data:` line in an SSE body.
  * Blank lines, `event:`/`id:`/retry lines and comments are skipped.
  */
@@ -19,6 +29,7 @@ export async function* sseDataEvents(
       while ((newline = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, newline).trim();
         buffer = buffer.slice(newline + 1);
+        sseDebug(line);
         if (!line.startsWith("data:")) continue;
         const data = line.slice(5).trim();
         if (data) yield data;

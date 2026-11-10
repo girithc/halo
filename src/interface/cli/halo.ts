@@ -99,6 +99,7 @@ async function main(): Promise<void> {
     const ac = new AbortController();
     currentRequest = ac;
     let reply = "";
+    let sawOutput = false;
     try {
       // Re-resolve per request so /model switches pick the right key.
       const requestAuth =
@@ -106,6 +107,7 @@ async function main(): Promise<void> {
       for await (const chunk of registry
         .createProvider(requestAuth.key)
         .chat(history, ac.signal)) {
+        sawOutput = true;
         if (chunk.kind === "reasoning") {
           view.reasoning(chunk.text);
         } else {
@@ -126,7 +128,11 @@ async function main(): Promise<void> {
     if (reply) {
       history.push({ role: "assistant", content: reply });
     } else if (!ac.signal.aborted) {
-      out.info("(empty response)");
+      out.info(
+        sawOutput
+          ? "(the model thought, but sent no answer text)"
+          : "(no answer received — run `HALO_DEBUG=1 halo` to inspect the raw stream)",
+      );
     }
   }
 
