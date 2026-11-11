@@ -270,7 +270,12 @@ export function App({ session, commands, interactive = true, initialPrompt }: Ap
         {visible.map((line, i) => (
           <Text key={i}>
             {line.prefix && <Text color={line.prefixColor}>{line.prefix}</Text>}
-            <Text color={line.color} dimColor={line.dim} italic={line.italic}>
+            <Text
+              color={line.color}
+              backgroundColor={line.bgColor}
+              dimColor={line.dim}
+              italic={line.italic}
+            >
               {/* ink collapses empty text to zero height — a lone space
                   is what makes a blank line actually occupy a row */}
               {line.text === "" ? " " : line.text}

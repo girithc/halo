@@ -32,6 +32,7 @@ export interface Line {
   prefixColor?: string;
   text: string;
   color?: string;
+  bgColor?: string;
   dim?: boolean;
   italic?: boolean;
 }
@@ -122,23 +123,46 @@ function wrapText(text: string, width: number): string[] {
 
 /**
  * Assistant body renderer: prose carries the halo ❯ prefix (first line
- * only), and ``` fences render as code blocks — markers dim, code
- * indented and green.
+ * only). ``` fences don't render as markers — their content becomes a
+ * darker-background panel instead.
  */
+const CODE_PANEL_BG = "#262626";
+
 function pushAssistantBody(lines: Line[], body: string, width: number): void {
   let inFence = false;
+  let code: string[] = [];
   let firstLine = true;
+
+  // Paint the collected code lines as one padded dark panel.
+  const flushCode = () => {
+    const codeWidth = Math.max(10, width - 6);
+    const rows: string[] = [];
+    for (const raw of code) {
+      if (raw.trim() === "") {
+        rows.push("");
+        continue;
+      }
+      rows.push(...wrapText(raw, codeWidth));
+    }
+    if (rows.length === 0) return;
+    const blockWidth = Math.min(width - 2, Math.max(...rows.map((r) => r.length)) + 4);
+    for (const row of rows) {
+      lines.push({ text: ("  " + row).padEnd(blockWidth), bgColor: CODE_PANEL_BG });
+    }
+  };
+
   for (const raw of body.split("\n")) {
     const trimmed = raw.trim();
     if (trimmed.startsWith("```")) {
+      if (inFence) {
+        flushCode();
+        code = [];
+      }
       inFence = !inFence;
-      lines.push({ text: "  " + trimmed, dim: true });
-      firstLine = false;
-      continue;
+      continue; // markers themselves never render
     }
     if (inFence) {
-      pushWrapped(lines, "  ", undefined, raw, { color: "green" }, width);
-      firstLine = false;
+      code.push(raw);
       continue;
     }
     const prefix = firstLine ? "halo ❯ " : "  ";
@@ -146,6 +170,7 @@ function pushAssistantBody(lines: Line[], body: string, width: number): void {
     pushWrapped(lines, prefix, prefixColor, raw, {}, width);
     firstLine = false;
   }
+  if (inFence) flushCode(); // unclosed fence at end of body
 }
 
 function pushWrapped(
