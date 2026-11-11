@@ -49,13 +49,16 @@ export function renderChat(
 ): Line[] {
   const lines: Line[] = [];
   for (const m of messages) {
-    lines.push({ text: "" }); // one blank line before every turn
+    // Blank line before conversation turns only — tool calls, results and
+    // thinking lines hug whatever came above them, no wasted rows.
+    const gap = m.role === "info" || m.role === "thought" ? 0 : 1;
+    for (let i = 0; i < gap; i++) lines.push({ text: "" });
     switch (m.role) {
       case "user":
-        pushWrapped(lines, "you ❯ ", "magentaBright", m.text, {}, opts.width, 0.5);
+        pushWrapped(lines, "you ❯ ", "magentaBright", m.text, {}, opts.width);
         break;
       case "assistant":
-        if (m.text) pushWrapped(lines, "halo ❯ ", "cyan", m.text, {}, opts.width, 1);
+        if (m.text) pushAssistantBody(lines, m.text, opts.width);
         break;
       case "info":
         pushWrapped(lines, "", undefined, `· ${m.text}`, { dim: true }, opts.width);
@@ -115,6 +118,34 @@ function wrapText(text: string, width: number): string[] {
     out.push(line);
   }
   return out;
+}
+
+/**
+ * Assistant body renderer: prose carries the halo ❯ prefix (first line
+ * only), and ``` fences render as code blocks — markers dim, code
+ * indented and green.
+ */
+function pushAssistantBody(lines: Line[], body: string, width: number): void {
+  let inFence = false;
+  let firstLine = true;
+  for (const raw of body.split("\n")) {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith("```")) {
+      inFence = !inFence;
+      lines.push({ text: "  " + trimmed, dim: true });
+      firstLine = false;
+      continue;
+    }
+    if (inFence) {
+      pushWrapped(lines, "  ", undefined, raw, { color: "green" }, width);
+      firstLine = false;
+      continue;
+    }
+    const prefix = firstLine ? "halo ❯ " : "  ";
+    const prefixColor = firstLine ? "cyan" : undefined;
+    pushWrapped(lines, prefix, prefixColor, raw, {}, width);
+    firstLine = false;
+  }
 }
 
 function pushWrapped(
