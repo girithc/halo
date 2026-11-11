@@ -41,7 +41,7 @@ export async function* runTurn(
   options: TurnOptions,
 ): AsyncGenerator<TurnEvent, void> {
   const { provider, tools, signal } = options;
-  const maxRounds = options.maxToolRounds ?? 8;
+  const maxRounds = options.maxToolRounds ?? 10;
   const convo: ChatMessage[] = [...options.messages];
 
   for (let round = 0; round < maxRounds; round++) {
@@ -78,6 +78,28 @@ export async function* runTurn(
       yield { type: "tool_result", call, result };
     }
     // Loop: the model now sees the tool results and continues.
+  }
+
+  // Tool budget exhausted — force closure instead of dying silently:
+  // one final call with NO tools advertised, so the model must answer
+  // from whatever it gathered.
+  convo.push({
+    role: "user",
+    content:
+      "Tool budget reached. Answer the user's original request NOW from " +
+      "what you have gathered so far — do not attempt more tool calls.",
+  });
+  for await (const chunk of provider.chat(convo, { signal })) {
+    if (chunk.kind === "reasoning") {
+      yield { type: "reasoning", text: chunk.text };
+    } else if (chunk.kind === "answer") {
+      yield { type: "answer", text: chunk.text };
+    } else if (chunk.kind === "tool_calls") {
+      yield {
+        type: "answer",
+        text: "\n(tool budget reached — no further tool calls possible)",
+      };
+    }
   }
 }
 
