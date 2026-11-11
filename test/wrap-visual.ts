@@ -56,8 +56,11 @@ const multi = renderChat(
 );
 
 const assistantRows = multi.filter((l) => !l.bgColor && l.prefix !== undefined && l.prefixColor === "cyan");
-const firstBubble = multi[multi.findIndex((l) => l.text.includes("Looking"))]!;
-const secondBubble = multi[multi.findIndex((l) => l.text.includes("It is in"))]!;
+const rowText = (l: { text: string; parts?: Array<{ text: string }> }): string =>
+  l.parts ? l.parts.map((p) => p.text).join("") : l.text;
+
+const firstBubble = multi[multi.findIndex((l) => rowText(l).includes("Looking"))]!;
+const secondBubble = multi[multi.findIndex((l) => rowText(l).includes("It is in"))]!;
 expect(firstBubble.prefix === "halo ❯ ", "first bubble after request carries halo ❯");
 expect(secondBubble.prefix === "  ", "continuation bubble flows without halo ❯");
 expect(
@@ -65,6 +68,22 @@ expect(
   "user rows keep their prefix (row 1 — row 0 is the gap blank)",
 );
 void assistantRows;
+
+// --- 3. inline `code` chips render as blue parts, backticks dropped ---
+const inline = renderChat(
+  [{ id: 1, role: "assistant", text: "`ToolRegistry` lives in:" }],
+  { width: 60, busy: false, frame: "⠋", elapsed: 0, modelId: "m" },
+);
+const chipRow = inline.find((l) => l.parts?.length)!;
+expect(
+  chipRow.parts!.some((p) => p.text === "ToolRegistry" && p.color === "blue"),
+  "inline code renders as a blue chip",
+);
+expect(!chipRow.parts!.some((p) => p.text.includes("`")), "backticks are not rendered");
+expect(
+  chipRow.parts!.map((p) => p.text).join("").includes("lives in:"),
+  "prose around the chip still renders",
+);
 
 if (failures > 0) {
   console.error(`\n${failures} FAILURES`);

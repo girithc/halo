@@ -35,6 +35,17 @@ export interface Line {
   bgColor?: string;
   dim?: boolean;
   italic?: boolean;
+  /** Multi-part row (e.g. prose with inline-code chips). Overrides text. */
+  parts?: LinePart[];
+}
+
+/** One styled fragment of a multi-part row. */
+export interface LinePart {
+  text: string;
+  color?: string;
+  bgColor?: string;
+  dim?: boolean;
+  italic?: boolean;
 }
 
 /** Renders the chat data as lines (prefixes, colors, spacing). */
@@ -130,14 +141,89 @@ function wrapText(text: string, width: number): string[] {
   return out;
 }
 
+/** Darker panel background shared by code blocks and inline chips. */
+const CODE_PANEL_BG = "#262626";
+
+/** Inline code chip: blue on the code-panel background. */
+const INLINE_CODE_STYLE = { color: "blue", bgColor: CODE_PANEL_BG };
+
+/** Split a prose line into plain and `inline-code` segments. */
+function splitInlineCode(text: string): Array<{ text: string; code?: boolean }> {
+  return text
+    .split("`")
+    .map((part, i) => (i % 2 === 1 ? { text: part, code: true as const } : { text: part }))
+    .filter((seg) => seg.text.length > 0);
+}
+
+/** Push one prose row of segments, wrapping words across rows. */
+function pushProse(
+  lines: Line[],
+  segs: Array<{ text: string; code?: boolean }>,
+  prefix: string,
+  prefixColor: string | undefined,
+  width: number,
+): void {
+  interface Token {
+    text: string;
+    code?: boolean;
+  }
+  const tokens: Token[] = [];
+  for (const seg of segs) {
+    if (seg.code) {
+      tokens.push({ text: seg.text, code: true });
+      continue;
+    }
+    for (const word of seg.text.split(" ")) {
+      if (word) tokens.push({ text: word });
+    }
+  }
+
+  const rows: Token[][] = [];
+  let row: Token[] = [];
+  let len = prefix.length;
+  let pendingSpace = false;
+  for (const token of tokens) {
+    const need = (pendingSpace ? 1 : 0) + token.text.length;
+    const rowWidth = rows.length === 0 ? Math.max(10, width - prefix.length) : Math.max(10, width - 2);
+    if (len + need > rowWidth && row.length > 0) {
+      rows.push(row);
+      row = [];
+      len = 2; // continuation rows carry the "  " indent
+      pendingSpace = false;
+    }
+    len += need;
+    row.push(token);
+    pendingSpace = true;
+  }
+  rows.push(row);
+
+  rows.forEach((tokensForRow, rowIdx) => {
+    const parts: LinePart[] = [];
+    tokensForRow.forEach((token, i) => {
+      if (i > 0) parts.push({ text: " " });
+      parts.push(
+        token.code
+          ? { text: token.text, ...INLINE_CODE_STYLE }
+          : { text: token.text },
+      );
+    });
+    const isFirst = rowIdx === 0;
+    lines.push({
+      text: "",
+      prefix: isFirst ? prefix : "  ",
+      prefixColor: isFirst ? prefixColor : undefined,
+      parts,
+    });
+  });
+}
+
 /**
  * Assistant body renderer: prose carries the halo ❯ prefix on the first
  * line — but only when `showPrefix` is set (it's shown once per user
  * request; continuation rounds after tool calls flow without it).
- * ``` fences don't render as markers — their content becomes a
- * darker-background panel instead.
+ * Inline `code` spans render as blue chips. ``` fences don't render as
+ * markers — their content becomes a darker-background panel instead.
  */
-const CODE_PANEL_BG = "#262626";
 
 function pushAssistantBody(
   lines: Line[],
@@ -183,7 +269,12 @@ function pushAssistantBody(
     }
     const prefix = firstLine ? "halo ❯ " : "  ";
     const prefixColor = firstLine ? "cyan" : undefined;
-    pushWrapped(lines, prefix, prefixColor, raw, {}, width);
+    const segs = splitInlineCode(raw);
+    if (segs.length === 0) {
+      lines.push({ text: "" }); // blank line inside prose
+    } else {
+      pushProse(lines, segs, prefix, prefixColor, width);
+    }
     firstLine = false;
   }
   if (inFence) flushCode(); // unclosed fence at end of body

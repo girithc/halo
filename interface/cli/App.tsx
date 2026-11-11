@@ -270,16 +270,30 @@ export function App({ session, commands, interactive = true, initialPrompt }: Ap
         {visible.map((line, i) => (
           <Text key={i}>
             {line.prefix && <Text color={line.prefixColor}>{line.prefix}</Text>}
-            <Text
-              color={line.color}
-              backgroundColor={line.bgColor}
-              dimColor={line.dim}
-              italic={line.italic}
-            >
-              {/* ink collapses empty text to zero height — a lone space
-                  is what makes a blank line actually occupy a row */}
-              {line.text === "" ? " " : line.text}
-            </Text>
+            {line.parts ? (
+              line.parts.map((part, j) => (
+                <Text
+                  key={j}
+                  color={part.color}
+                  backgroundColor={part.bgColor}
+                  dimColor={part.dim}
+                  italic={part.italic}
+                >
+                  {part.text}
+                </Text>
+              ))
+            ) : (
+              <Text
+                color={line.color}
+                backgroundColor={line.bgColor}
+                dimColor={line.dim}
+                italic={line.italic}
+              >
+                {/* ink collapses empty text to zero height — a lone space
+                    is what makes a blank line actually occupy a row */}
+                {line.text === "" ? " " : line.text}
+              </Text>
+            )}
           </Text>
         ))}
       </Box>
