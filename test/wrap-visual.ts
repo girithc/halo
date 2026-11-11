@@ -120,12 +120,24 @@ const expandedAll = renderChat(busyTranscript, {
 const collapsedText = collapsed.map((l) => rowText(l)).join("\n");
 const expandedText = expandedAll.map((l) => rowText(l)).join("\n");
 expect(
-  collapsedText.includes("3 earlier tool lines hidden (ctrl+o to expand)"),
-  "collapsed run shows the hidden counter",
+  collapsedText.includes("· ⋯ 7 tool uses (ctrl+o to expand)"),
+  "finished turn collapses to one counter line",
 );
 expect(
-  collapsedText.includes("⚙ tool(6)") && !collapsedText.includes("⚙ tool(2)"),
-  "collapsed run keeps only the last 4 activity rows",
+  !collapsedText.includes("⚙ tool("),
+  "finished turn hides all tool lines",
+);
+const activeView = renderChat(busyTranscript, {
+  width: 60, busy: true, frame: "⠋", elapsed: 0, modelId: "m", expanded: false,
+});
+const activeText = activeView.map((l) => rowText(l)).join("\n");
+expect(
+  activeText.includes("3 earlier tool lines hidden"),
+  "active turn shows the hidden counter",
+);
+expect(
+  activeText.includes("⚙ tool(6)") && !activeText.includes("⚙ tool(2)"),
+  "active turn keeps only the last 4 activity rows",
 );
 expect(
   expandedText.includes("⚙ tool(0)") && expandedText.includes("⚙ tool(6)") && !expandedText.includes("hidden"),
