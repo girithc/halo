@@ -1,4 +1,4 @@
 node_modules/
-.env
 .DS_Store
 *.log
+# private repo — env files are tracked intentionally
