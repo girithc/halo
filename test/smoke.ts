@@ -2,9 +2,12 @@
  * Smoke test — no API key needed.
  * Spins a mock server speaking BOTH wire protocols (chat-completions and
  * Meta-style responses) and runs the REAL providers and parsers against it.
+ * Also exercises the core/out tool-calling loop end to end.
  *
  * Run: bun run test/smoke.ts
  */
+import { runTurn } from "../core/out/completion";
+import { ToolRegistry } from "../core/middleware/tools/registry";
 import { MetaProvider } from "../models/providers/meta";
 import { OpenAICompatibleProvider } from "../models/providers/openai-compatible";
 
@@ -37,6 +40,66 @@ const server = Bun.serve({
       if (!authorized) {
         return Response.json({ error: { message: "bad key" } }, { status: 401 });
       }
+      const body = (await req.json()) as {
+        messages?: Array<{ role: string; content: string }>;
+        tools?: unknown[];
+      };
+
+      // Tool round: with tools advertised, ask for the echo tool; once the
+      // tool result comes back, produce the final answer.
+      if (body.tools?.length) {
+        const sawToolResult = body.messages?.some((m) => m.role === "tool");
+        if (!sawToolResult) {
+          return sse([
+            {
+              choices: [
+                {
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: "call_1",
+                        type: "function",
+                        function: { name: "echo", arguments: "" },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            // argument JSON split across fragments — must be reassembled
+            {
+              choices: [
+                {
+                  delta: {
+                    tool_calls: [
+                      { index: 0, function: { arguments: '{"text"' } },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              choices: [
+                {
+                  delta: {
+                    tool_calls: [
+                      { index: 0, function: { arguments: ':"hi"}' } },
+                    ],
+                  },
+                },
+              ],
+            },
+          ]);
+        }
+        const toolMsg = body.messages!.find((m) => m.role === "tool")!;
+        return sse([
+          {
+            choices: [{ delta: { content: `tool said ${toolMsg.content}` } }],
+          },
+        ]);
+      }
+
       return sse([
         { choices: [{ delta: { reasoning_content: "pondering" } }] },
         ...CHUNKS.map((piece) => ({
@@ -86,10 +149,10 @@ let failures = 0;
   let reasoning = "";
   for await (const chunk of provider.chat(
     [{ role: "user", content: "hi" }],
-    new AbortController().signal,
+    { signal: new AbortController().signal },
   )) {
     if (chunk.kind === "reasoning") reasoning += chunk.text;
-    else text += chunk.text;
+    else if (chunk.kind === "answer") text += chunk.text;
   }
   if (text !== CHUNKS.join("") || reasoning !== "pondering") {
     console.error(`FAIL: got answer ${JSON.stringify(text)}, reasoning ${JSON.stringify(reasoning)}`);
@@ -108,7 +171,7 @@ let failures = 0;
   try {
     for await (const _ of bad.chat(
       [{ role: "user", content: "hi" }],
-      new AbortController().signal,
+      { signal: new AbortController().signal },
     )) {
       // drain
     }
@@ -142,10 +205,10 @@ let failures = 0;
       { role: "system", content: "be brief" },
       { role: "user", content: "hi" },
     ],
-    new AbortController().signal,
+    { signal: new AbortController().signal },
   )) {
     if (chunk.kind === "reasoning") reasoning += chunk.text;
-    else text += chunk.text;
+    else if (chunk.kind === "answer") text += chunk.text;
   }
   if (text !== "Meta works" || reasoning !== "thinking...") {
     console.error(
@@ -170,7 +233,7 @@ let failures = 0;
   try {
     for await (const _ of meta.chat(
       [{ role: "user", content: "hi" }],
-      new AbortController().signal,
+      { signal: new AbortController().signal },
     )) {
       // drain
     }
@@ -184,6 +247,48 @@ let failures = 0;
       console.error(`FAIL: unexpected meta error: ${msg}`);
       failures++;
     }
+  }
+}
+
+// 5. core/out tool-calling loop: model asks for a tool, the registry
+//    executes it, the result is fed back, final answer arrives.
+{
+  const provider = new OpenAICompatibleProvider(
+    { id: "mock-model", baseURL: `http://localhost:${port}/v1` },
+    "test-key",
+  );
+  const tools = new ToolRegistry();
+  tools.register({
+    name: "echo",
+    description: "echoes its input",
+    parameters: { type: "object", properties: { text: { type: "string" } } },
+    execute: async (args) => `echo:${args["text"]}`,
+  });
+
+  const events: string[] = [];
+  let answer = "";
+  for await (const event of runTurn({
+    provider,
+    messages: [{ role: "user", content: "what is 2+2" }],
+    tools,
+    signal: new AbortController().signal,
+  })) {
+    events.push(event.type);
+    if (event.type === "answer") answer += event.text;
+  }
+
+  const call = events[0] === "tool_call";
+  const result = events[1] === "tool_result";
+  const final = events[2] === "answer" && events.length === 3;
+  if (!call || !result || !final || answer !== "tool said echo:hi") {
+    console.error(
+      `FAIL: tool loop events ${JSON.stringify(events)} answer ${JSON.stringify(answer)}`,
+    );
+    failures++;
+  } else {
+    console.log(
+      `ok  tool loop: ${events.join(" -> ")} -> ${JSON.stringify(answer)}`,
+    );
   }
 }
 

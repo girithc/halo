@@ -9,7 +9,9 @@ import { render } from "ink";
 import { Writable } from "node:stream";
 import type { WriteStream } from "node:tty";
 import { createElement } from "react";
-import { App } from "../interface/cli/ui/App";
+import { AgentSession } from "../core/agent";
+import { SYSTEM_PROMPT } from "../core/in/context";
+import { App } from "../interface/cli/App";
 import { ModelRegistry } from "../models/registry";
 
 const MARKER = "MOCK_ANSWER_MARKER_OK";
@@ -46,10 +48,15 @@ const registry = new ModelRegistry({
   apiKeyEnv: [],
 });
 
+const session = new AgentSession({
+  registry,
+  getApiKey: () => Promise.resolve("test-key"),
+  systemPrompt: SYSTEM_PROMPT,
+});
+
 const { waitUntilExit } = render(
   createElement(App, {
-    registry,
-    apiKey: "test-key",
+    session,
     interactive: false,
     initialPrompt: "say hi",
   }),

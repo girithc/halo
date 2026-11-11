@@ -1,7 +1,8 @@
 /**
- * Tools — functions the model may call. The tool-use loop in the CLI
- * will advertise these to the model and execute its choices.
+ * Tools — functions the model may call. The completion loop in core/out
+ * advertises these to the model and executes its choices.
  */
+import type { ToolSpec } from "../../../models/types";
 
 export interface Tool {
   name: string;
@@ -24,5 +25,17 @@ export class ToolRegistry {
 
   list(): Tool[] {
     return [...this.#tools.values()];
+  }
+
+  /** Wire-format tool definitions to advertise to the model. */
+  specs(): ToolSpec[] {
+    return this.list().map((tool) => ({
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
+    }));
   }
 }

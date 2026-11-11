@@ -2,6 +2,7 @@ import { describeError, errorText, sseDataEvents } from "../http";
 import type {
   ChatChunk,
   ChatMessage,
+  ChatOptions,
   ModelConfig,
   ModelProvider,
 } from "../types";
@@ -10,6 +11,9 @@ import type {
  * Meta's api.meta.ai speaks the OpenAI **Responses** wire protocol:
  * POST {base}/responses with `input`, streamed as typed SSE events
  * (`response.output_text.delta`, `response.completed`, ...).
+ *
+ * Tool calling is a chat-completions feature; this shim passes plain
+ * text roles only (tool results are flattened into user-visible text).
  */
 export class MetaProvider implements ModelProvider {
   readonly config: ModelConfig;
@@ -22,7 +26,7 @@ export class MetaProvider implements ModelProvider {
 
   async *chat(
     messages: readonly ChatMessage[],
-    signal: AbortSignal,
+    options: ChatOptions = {},
   ): AsyncIterable<ChatChunk> {
     const url = `${this.config.baseURL.replace(/\/+$/, "")}/responses`;
     const res = await fetch(url, {
@@ -34,7 +38,7 @@ export class MetaProvider implements ModelProvider {
       },
       body: JSON.stringify({
         model: this.config.id,
-        input: messages.map((m) => ({ role: m.role, content: m.content })),
+        input: messages.map((m) => ({ role: wireRole(m), content: m.content })),
         stream: true,
         // Without this the server defaults to effort "high" and thinks
         // for a very long time before the first token.
@@ -42,7 +46,7 @@ export class MetaProvider implements ModelProvider {
           ? { reasoning: { effort: this.config.reasoningEffort } }
           : {}),
       }),
-      signal,
+      signal: options.signal,
     });
 
     if (!res.ok) {
@@ -116,3 +120,9 @@ type ResponsesEnvelope = {
   error?: unknown;
   output?: ResponseOutputItem[];
 };
+
+/** The Responses shim has no tool role — flatten results into user text. */
+function wireRole(m: ChatMessage): string {
+  if (m.role === "tool") return "user";
+  return m.role;
+}

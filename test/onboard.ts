@@ -5,7 +5,7 @@
  * Run: HALO_DIR=$(mktemp -d) bash -c 'printf "2\nsk-test-meta-123\n1\n" | bun run test/onboard.ts'
  */
 import { InputReader } from "../core/in/input";
-import { runOnboarding } from "../interface/cli/onboard";
+import { runOnboarding } from "../interface/cli/halo";
 import { configPath, loadConfig } from "../secrets/config";
 import { loadHaloEnv } from "../secrets/store";
 
