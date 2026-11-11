@@ -112,14 +112,15 @@ export class AgentSession {
     });
     this.#history.push({ role: "user", content: trimmed });
     this.#push({ role: "user", text: trimmed });
-    this.#push({ role: "assistant", text: "" }); // fills in as chunks arrive
     this.#busy = true;
     this.#emit();
 
     const started = Date.now();
     const ac = new AbortController();
     this.#abort = ac;
-    let reply = "";
+    let roundText = "";
+    const rounds: string[] = [];
+    let currentAssistantId: number | null = null;
     let reasoning = false;
     try {
       const provider = this.#registry.createProvider(await this.#getApiKey());
@@ -132,9 +133,17 @@ export class AgentSession {
         if (event.type === "reasoning") {
           reasoning = true;
         } else if (event.type === "answer") {
-          reply += event.text;
-          this.#updateLastAssistant(reply);
+          // Each tool round streams into its own assistant bubble.
+          if (currentAssistantId == null) {
+            currentAssistantId = this.#push({ role: "assistant", text: "" });
+          }
+          roundText += event.text;
+          this.#updateEntry(currentAssistantId, roundText);
         } else if (event.type === "tool_call") {
+          // A tool round ends here: close the bubble, log the call.
+          if (roundText) rounds.push(roundText);
+          roundText = "";
+          currentAssistantId = null;
           this.#push({
             role: "info",
             text: `⚙ ${event.call.name}(${event.call.arguments})`,
@@ -158,14 +167,13 @@ export class AgentSession {
         1,
         Math.round((Date.now() - started) / 1000),
       );
+      if (roundText) rounds.push(roundText);
+      const reply = rounds.filter((t) => t.trim()).join("\n\n");
       if (reply) {
         this.#history.push({ role: "assistant", content: reply });
         if (reasoning) this.#push({ role: "thought", text: "", seconds });
-      } else {
-        this.#dropLastAssistant(); // nothing arrived — no empty bubble
-        if (!ac.signal.aborted) {
-          this.#push({ role: "info", text: "(no answer received)" });
-        }
+      } else if (!ac.signal.aborted) {
+        this.#push({ role: "info", text: "(no answer received)" });
       }
       this.#busy = false;
       this.#abort = null;
@@ -176,27 +184,19 @@ export class AgentSession {
 
   // ---- entry bookkeeping ---------------------------------------------------
 
-  #push(entry: Omit<SessionEntry, "id">): void {
-    this.#entries = [...this.#entries, { ...entry, id: this.#nextId++ }];
+  #push(entry: Omit<SessionEntry, "id">): number {
+    const id = this.#nextId++;
+    this.#entries = [...this.#entries, { ...entry, id }];
     this.#emit();
+    return id;
   }
 
-  #updateLastAssistant(text: string): void {
-    const idx = this.#entries.map((e) => e.role).lastIndexOf("assistant");
+  #updateEntry(id: number, text: string): void {
+    const idx = this.#entries.findIndex((e) => e.id === id);
     if (idx === -1) return;
     const next = [...this.#entries];
     next[idx] = { ...next[idx]!, text };
     this.#entries = next;
-    this.#emit();
-  }
-
-  #dropLastAssistant(): void {
-    const idx = this.#entries.map((e) => e.role).lastIndexOf("assistant");
-    if (idx === -1) return;
-    this.#entries = [
-      ...this.#entries.slice(0, idx),
-      ...this.#entries.slice(idx + 1),
-    ];
     this.#emit();
   }
 
