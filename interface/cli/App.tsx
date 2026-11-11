@@ -58,6 +58,9 @@ function useSessionView({
   const [tick, setTick] = useState(0);
   const [rows, setRows] = useState(stdout.rows || 24);
   const [cols, setCols] = useState(stdout.columns || 80);
+  // Scroll: 0 = pinned to live tail; N = N lines back into history.
+  const [scrollLines, setScrollLines] = useState(0);
+  const maxScrollRef = useRef(0);
 
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -77,6 +80,7 @@ function useSessionView({
         void commands?.run(parsed.name, parsed.args);
         return;
       }
+      setScrollLines(0); // sending a message jumps back to the live tail
       const turn = session.send(parsed.text);
       if (initialPendingRef.current) {
         initialPendingRef.current = false;
@@ -107,15 +111,40 @@ function useSessionView({
       if (busyRef.current) session.abort();
       return;
     }
-    if (chunk.startsWith("\x1b")) return; // arrow/function sequences — ignored (v1)
+    if (chunk.startsWith("\x1b")) {
+      // Scroll keys — work even mid-stream (reading history while busy).
+      if (chunk === "\x1b[5~" || chunk === "\x1b[A") {
+        // PageUp / Up: further back (clamped to the oldest line).
+        const step = chunk === "\x1b[5~" ? Math.max(1, rows - 4) : 1;
+        setScrollLines((s) => Math.min(s + step, Math.max(0, maxScrollRef.current)));
+        return;
+      }
+      if (chunk === "\x1b[6~" || chunk === "\x1b[B") {
+        // PageDown / Down: toward the live tail.
+        const step = chunk === "\x1b[6~" ? Math.max(1, rows - 4) : 1;
+        setScrollLines((s) => Math.max(0, s - step));
+        return;
+      }
+      if (chunk === "\x1b[F" || chunk === "\x1b[4~") {
+        setScrollLines(0); // End: back to live
+        return;
+      }
+      if (chunk === "\x1b[H" || chunk === "\x1b[1~") {
+        setScrollLines(Math.max(0, maxScrollRef.current)); // Home: oldest
+        return;
+      }
+      return; // other sequences — ignored (v1)
+    }
     if (chunk === "\x7f" || chunk === "\b") {
       if (!busyRef.current) setDraft((d) => d.slice(0, -1));
+      setScrollLines(0);
       return;
     }
     if (chunk === "\r" || chunk === "\n") {
       if (busyRef.current) return;
       const text = draftRef.current;
       setDraft("");
+      setScrollLines(0);
       submitRef.current(text);
       return;
     }
@@ -128,9 +157,11 @@ function useSessionView({
       const rest = chunk.slice(newlineAt + 1).replace(/[\r\n]+$/, "");
       const text = draftRef.current + head;
       setDraft(rest);
+      setScrollLines(0);
       submitRef.current(text);
       return;
     }
+    setScrollLines(0);
     setDraft((d) => d + chunk);
   };
   const keyRef = useRef(handleKey);
@@ -200,6 +231,8 @@ function useSessionView({
     modelId: session.modelId,
     draft,
     setDraft,
+    scrollLines,
+    maxScrollRef,
   };
 }
 
@@ -219,7 +252,12 @@ export function App({ session, commands, interactive = true, initialPrompt }: Ap
     elapsed: view.elapsed,
     modelId: view.modelId,
   });
-  const visible = lines.slice(-viewportRows);
+
+  // Scroll window: offset 0 = live tail; N = N lines back into history.
+  view.maxScrollRef.current = Math.max(0, lines.length - viewportRows);
+  const offset = Math.min(view.scrollLines, view.maxScrollRef.current);
+  const end = lines.length - offset;
+  const visible = lines.slice(Math.max(0, end - viewportRows), end);
 
   return (
     <Box flexDirection="column" height={view.rows} width="100%">
@@ -227,7 +265,7 @@ export function App({ session, commands, interactive = true, initialPrompt }: Ap
         flexDirection="column"
         height={viewportRows}
         overflow="hidden"
-        justifyContent="flex-end"
+        justifyContent={offset > 0 ? "flex-start" : "flex-end"}
       >
         {visible.map((line, i) => (
           <Text key={i}>
@@ -249,7 +287,11 @@ export function App({ session, commands, interactive = true, initialPrompt }: Ap
       <Box justifyContent="space-between" width="100%">
         <Text dimColor>{" " + view.modelId}</Text>
         <Text dimColor>
-          {view.busy ? "esc to interrupt " : "/help commands · ctrl-c to quit "}
+          {view.busy
+            ? "esc to interrupt "
+            : offset > 0
+              ? `history · ${offset} back · End to return `
+              : "/help commands · ctrl-c to quit "}
         </Text>
       </Box>
     </Box>
