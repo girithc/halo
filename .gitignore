@@ -1,4 +1,5 @@
 node_modules/
 .DS_Store
 *.log
-# private repo — env files are tracked intentionally
+.env
+# env files stay untracked — keys live in ~/.halo/.env
