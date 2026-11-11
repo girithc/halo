@@ -171,6 +171,8 @@ function wrapText(text: string, width: number): string[] {
 
 /** Darker panel background shared by code blocks and inline chips. */
 const CODE_PANEL_BG = "#262626";
+/** Code text: soft green, distinct from prose white. */
+const CODE_COLOR = "#a6d189";
 
 /** Inline code chip: blue on the code-panel background. */
 const INLINE_CODE_STYLE = { color: "blue", bgColor: CODE_PANEL_BG };
@@ -276,9 +278,18 @@ function pushAssistantBody(
     }
     if (rows.length === 0) return;
     const blockWidth = Math.min(width - 2, Math.max(...rows.map((r) => r.length)) + 4);
-    for (const row of rows) {
-      lines.push({ text: ("  " + row).padEnd(blockWidth), bgColor: CODE_PANEL_BG });
-    }
+    rows.forEach((row, i) => {
+      // code row: soft green on the panel background
+      lines.push({
+        text: ("  " + row).padEnd(blockWidth),
+        bgColor: CODE_PANEL_BG,
+        color: CODE_COLOR,
+      });
+      // spacing: a panel-colored gap row between code lines
+      if (i < rows.length - 1) {
+        lines.push({ text: "".padEnd(blockWidth), bgColor: CODE_PANEL_BG });
+      }
+    });
   };
 
   for (const raw of body.split("\n")) {
