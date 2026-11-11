@@ -88,35 +88,39 @@ export function renderChat(
   return lines;
 }
 
-/** Greedy word wrap on plain text (long words hard-split). */
+/** Greedy word wrap that PRESERVES each line's leading indentation
+ * (code blocks keep their nesting) and hard-splits overlong words. */
 function wrapText(text: string, width: number): string[] {
   const out: string[] = [];
   for (const paragraph of text.split("\n")) {
-    if (!paragraph) {
+    const lead = (paragraph.match(/^ */) ?? [""])[0] ?? "";
+    const body = paragraph.slice(lead.length);
+    if (body === "") {
       out.push("");
       continue;
     }
+    const lineWidth = Math.max(10, width - lead.length);
     let line = "";
-    for (const word of paragraph.split(" ")) {
+    for (const word of body.split(" ")) {
       let w = word;
       if (!line) {
-        while (w.length > width) {
-          out.push(w.slice(0, width));
-          w = w.slice(width);
+        while (w.length > lineWidth) {
+          out.push(lead + w.slice(0, lineWidth));
+          w = w.slice(lineWidth);
         }
         line = w;
-      } else if ((line + " " + w).length <= width) {
+      } else if ((line + " " + w).length <= lineWidth) {
         line += " " + w;
       } else {
-        out.push(line);
-        while (w.length > width) {
-          out.push(w.slice(0, width));
-          w = w.slice(width);
+        out.push(lead + line);
+        while (w.length > lineWidth) {
+          out.push(lead + w.slice(0, lineWidth));
+          w = w.slice(lineWidth);
         }
         line = w;
       }
     }
-    out.push(line);
+    out.push(lead + line);
   }
   return out;
 }
