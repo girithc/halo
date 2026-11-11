@@ -61,6 +61,13 @@ function useSessionView({
   // Scroll: 0 = pinned to live tail; N = N lines back into history.
   const [scrollLines, setScrollLines] = useState(0);
   const maxScrollRef = useRef(0);
+  // Activity windows: ctrl+o toggles the selected turn (or all if none).
+  const [expandedTurns, setExpandedTurns] = useState<Set<number>>(new Set());
+  const [globalExpanded, setGlobalExpanded] = useState(false);
+  const [selectedTurnId, setSelectedTurnId] = useState<number | null>(null);
+  const selectedRef = useRef<number | null>(null);
+  selectedRef.current = selectedTurnId;
+  const counterIdsRef = useRef<number[]>([]);
   // ctrl+o: expand/collapse the tool-activity blocks.
   const [expanded, setExpanded] = useState(false);
 
@@ -111,11 +118,34 @@ function useSessionView({
     }
     if (chunk === "\x1b") {
       if (busyRef.current) session.abort();
+      else setSelectedTurnId(null); // esc (idle): drop the selection
       return;
     }
     if (chunk === "\x0f") {
-      // ctrl+o: expand/collapse tool-activity windows.
-      setExpanded((e) => !e);
+      // ctrl+o: toggle the selected turn's activity; with no selection,
+      // expand/collapse everything.
+      const sel = selectedRef.current;
+      if (sel == null) {
+        setGlobalExpanded((g) => !g);
+      } else {
+        setExpandedTurns((prev) => {
+          const next = new Set(prev);
+          if (next.has(sel)) next.delete(sel);
+          else next.add(sel);
+          return next;
+        });
+      }
+      return;
+    }
+    if (chunk === "\t" || chunk === "\x1b[Z") {
+      // Tab / Shift+Tab: cycle the selection across turn counters.
+      const ids = counterIdsRef.current;
+      if (ids.length === 0) return;
+      const current = selectedRef.current;
+      const idx = ids.indexOf(current!);
+      const dir = chunk === "\t" ? 1 : -1;
+      const next = idx === -1 ? (dir === 1 ? 0 : ids.length - 1) : (idx + dir + ids.length) % ids.length;
+      setSelectedTurnId(ids[next]!);
       return;
     }
     if (chunk.startsWith("\x1b")) {
@@ -240,7 +270,10 @@ function useSessionView({
     setDraft,
     scrollLines,
     maxScrollRef,
-    expanded,
+    globalExpanded,
+    expandedTurns,
+    selectedTurnId,
+    counterIdsRef,
   };
 }
 
@@ -259,8 +292,15 @@ export function App({ session, commands, interactive = true, initialPrompt }: Ap
     frame,
     elapsed: view.elapsed,
     modelId: view.modelId,
-    expanded: view.expanded,
+    globalExpanded: view.globalExpanded,
+    expandedTurns: view.expandedTurns,
+    selectedTurnId: view.selectedTurnId,
   });
+  // Tab-cycling targets: every turn counter row, in order.
+  view.counterIdsRef.current = lines
+    .filter((l) => l.selectable)
+    .map((l) => l.turnId!)
+    .filter((id, i, all) => all.indexOf(id) === i);
 
   // Scroll window: offset 0 = live tail; N = N lines back into history.
   view.maxScrollRef.current = Math.max(0, lines.length - viewportRows);

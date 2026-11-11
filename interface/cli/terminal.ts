@@ -37,6 +37,10 @@ export interface Line {
   italic?: boolean;
   /** Multi-part row (e.g. prose with inline-code chips). Overrides text. */
   parts?: LinePart[];
+  /** Activity-counter rows: which turn they belong to / selection state. */
+  turnId?: number;
+  selectable?: boolean;
+  selected?: boolean;
 }
 
 /** One styled fragment of a multi-part row. */
@@ -68,12 +72,18 @@ export function renderChat(
     frame: string;
     elapsed: number;
     modelId: string;
-    /** ctrl+o toggle: show every tool line instead of the collapsed tail. */
-    expanded?: boolean;
+    /** Global expand (ctrl+o with no selection). */
+    globalExpanded?: boolean;
+    /** Turn ids expanded individually (ctrl+o on a selection). */
+    expandedTurns?: ReadonlySet<number>;
+    /** Currently selected turn (Tab cycling) — its counter highlights. */
+    selectedTurnId?: number | null;
   },
 ): Line[] {
   const lines: Line[] = [];
-  const expanded = opts.expanded === true;
+  const globalExpanded = opts.globalExpanded === true;
+  const expandedTurns = opts.expandedTurns ?? new Set<number>();
+  const selectedTurnId = opts.selectedTurnId ?? null;
 
   // Group entries into turns: every user entry starts a new turn.
   interface TurnGroup {
@@ -89,17 +99,29 @@ export function renderChat(
 
   turns.forEach((turn, turnIdx) => {
     // The active (last, busy) turn shows a live activity tail; finished
-    // turns collapse to a one-line counter. ctrl+o expands everything.
+    // turns collapse to a one-line counter. Expansion: per-turn (selected
+    // + ctrl+o) or global (ctrl+o with no selection).
+    const turnId = turn.user?.id ?? -(turnIdx + 1);
     const isActive = opts.busy && turnIdx === turns.length - 1;
+    const isTurnExpanded = globalExpanded || expandedTurns.has(turnId);
+    const isSelected = selectedTurnId === turnId;
     let haloShown = false;
 
     const activity: SessionEntry[] = [];
     const flushActivity = () => {
       if (activity.length === 0) return;
-      if (expanded) {
+      const n = activity.length;
+      const label = `· ⋯ ${n} tool use${n === 1 ? "" : "s"}`;
+      const header = isSelected
+        ? { text: label, color: "black", bgColor: "cyan", turnId, selectable: true, selected: true }
+        : { text: label, turnId, selectable: true, selected: false, dim: true, italic: true };
+
+      if (isTurnExpanded) {
+        lines.push({ ...header, text: `${label} (ctrl+o to collapse)` });
         for (const e of activity) lines.push({ text: `· ${e.text}`, dim: true });
       } else if (isActive) {
-        const hidden = Math.max(0, activity.length - MAX_ACTIVITY_VISIBLE);
+        lines.push({ ...header, text: `${label} — live:` });
+        const hidden = Math.max(0, n - MAX_ACTIVITY_VISIBLE);
         if (hidden > 0) {
           lines.push({
             text: `· ⋯ ${hidden} earlier tool line${hidden === 1 ? "" : "s"} hidden`,
@@ -111,11 +133,7 @@ export function renderChat(
           lines.push({ text: `· ${e.text}`, dim: true });
         }
       } else {
-        lines.push({
-          text: `· ⋯ ${activity.length} tool use${activity.length === 1 ? "" : "s"} (ctrl+o to expand)`,
-          dim: true,
-          italic: true,
-        });
+        lines.push({ ...header, text: `${label} (ctrl+o to expand)` });
       }
       activity.length = 0;
     };

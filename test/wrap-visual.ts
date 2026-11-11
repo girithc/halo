@@ -100,7 +100,7 @@ expect(
   "prose around the chip still renders",
 );
 
-// --- 4. activity runs collapse to a bounded window; ctrl+o expands ---
+// --- 4. activity windows are per-turn: counter, live tail, ctrl+o expand ---
 const busyTranscript = [
   { id: 1, role: "user" as const, text: "investigate" },
   { id: 2, role: "assistant" as const, text: "Checking." },
@@ -112,10 +112,10 @@ const busyTranscript = [
   { id: 10, role: "assistant" as const, text: "Done." },
 ];
 const collapsed = renderChat(busyTranscript, {
-  width: 60, busy: false, frame: "⠋", elapsed: 0, modelId: "m", expanded: false,
+  width: 60, busy: false, frame: "⠋", elapsed: 0, modelId: "m",
 });
 const expandedAll = renderChat(busyTranscript, {
-  width: 60, busy: false, frame: "⠋", elapsed: 0, modelId: "m", expanded: true,
+  width: 60, busy: false, frame: "⠋", elapsed: 0, modelId: "m", globalExpanded: true,
 });
 const collapsedText = collapsed.map((l) => rowText(l)).join("\n");
 const expandedText = expandedAll.map((l) => rowText(l)).join("\n");
@@ -128,7 +128,7 @@ expect(
   "finished turn hides all tool lines",
 );
 const activeView = renderChat(busyTranscript, {
-  width: 60, busy: true, frame: "⠋", elapsed: 0, modelId: "m", expanded: false,
+  width: 60, busy: true, frame: "⠋", elapsed: 0, modelId: "m",
 });
 const activeText = activeView.map((l) => rowText(l)).join("\n");
 expect(
@@ -142,6 +142,46 @@ expect(
 expect(
   expandedText.includes("⚙ tool(0)") && expandedText.includes("⚙ tool(6)") && !expandedText.includes("hidden"),
   "expanded run shows every tool line",
+);
+
+// --- 5. per-turn expansion: ctrl+o on a selection affects only that turn ---
+const twoTurns = [
+  { id: 1, role: "user" as const, text: "one" },
+  { id: 2, role: "assistant" as const, text: "Working." },
+  { id: 3, role: "info" as const, text: "⚙ a()" },
+  { id: 4, role: "info" as const, text: "⚙ b()" },
+  { id: 5, role: "assistant" as const, text: "Middle done." },
+  { id: 6, role: "user" as const, text: "two" },
+  { id: 7, role: "assistant" as const, text: "Again." },
+  { id: 8, role: "info" as const, text: "⚙ c()" },
+  { id: 9, role: "assistant" as const, text: "Finished." },
+];
+const onlySecond = renderChat(twoTurns, {
+  width: 60, busy: false, frame: "⠋", elapsed: 0, modelId: "m",
+  expandedTurns: new Set([6]), // turn 2's user entry id
+});
+const onlySecondText = onlySecond.map((l) => rowText(l)).join("\n");
+expect(
+  onlySecondText.split("⚙ c()").length - 1 === 1,
+  "selected turn expands its tool lines",
+);
+expect(
+  !onlySecondText.includes("⚙ a()") && onlySecondText.includes("· ⋯ 2 tool uses"),
+  "unselected turn stays collapsed",
+);
+const withSelection = renderChat(twoTurns, {
+  width: 60, busy: false, frame: "⠋", elapsed: 0, modelId: "m",
+  selectedTurnId: 1,
+});
+const selectedHeader = withSelection.find((l) => l.selected)!;
+expect(
+  selectedHeader.turnId === 1 && selectedHeader.bgColor === "cyan",
+  "selected turn's counter highlights",
+);
+const counters = withSelection.filter((l) => l.selectable).map((l) => l.turnId!);
+expect(
+  counters.length === new Set(counters).size && counters.length >= 2,
+  "every turn counter is selectable",
 );
 
 if (failures > 0) {
