@@ -48,6 +48,9 @@ export interface LinePart {
   italic?: boolean;
 }
 
+/** Activity rows (tool calls/results) visible before collapsing. */
+const MAX_ACTIVITY_VISIBLE = 4;
+
 /** Renders the chat data as lines (prefixes, colors, spacing). */
 export function renderChat(
   messages: readonly SessionEntry[],
@@ -57,15 +60,42 @@ export function renderChat(
     frame: string;
     elapsed: number;
     modelId: string;
+    /** ctrl+o toggle: show every tool line instead of the collapsed tail. */
+    expanded?: boolean;
   },
 ): Line[] {
   const lines: Line[] = [];
+  const expanded = opts.expanded === true;
   let haloShown = false; // halo ❯ appears once per user request
+
+  // Consecutive info entries (tool calls + results) form activity runs —
+  // rendered as a bounded window so thinking can't flood the transcript.
+  let run: SessionEntry[] = [];
+  const flushRun = () => {
+    if (run.length === 0) return;
+    const hidden = expanded ? 0 : Math.max(0, run.length - MAX_ACTIVITY_VISIBLE);
+    if (hidden > 0) {
+      lines.push({
+        text: `· ⋯ ${hidden} earlier tool line${hidden === 1 ? "" : "s"} hidden (ctrl+o to expand)`,
+        dim: true,
+        italic: true,
+      });
+    }
+    for (const entry of expanded ? run : run.slice(-MAX_ACTIVITY_VISIBLE)) {
+      lines.push({ text: `· ${entry.text}`, dim: true });
+    }
+    run = [];
+  };
+
   for (const m of messages) {
-    // Blank line before conversation turns only — tool calls, results and
-    // thinking lines hug whatever came above them, no wasted rows.
-    const gap = m.role === "info" || m.role === "thought" ? 0 : 1;
-    for (let i = 0; i < gap; i++) lines.push({ text: "" });
+    if (m.role === "info") {
+      run.push(m);
+      continue;
+    }
+    flushRun();
+    // Blank line before conversation turns only — activity and thinking
+    // lines hug whatever came above them, no wasted rows.
+    for (let i = 0; i < 1; i++) lines.push({ text: "" });
     switch (m.role) {
       case "user":
         haloShown = false; // next request shows halo ❯ again
@@ -76,9 +106,6 @@ export function renderChat(
           pushAssistantBody(lines, m.text, opts.width, !haloShown);
           haloShown = true; // continuation rounds flow without the prefix
         }
-        break;
-      case "info":
-        pushWrapped(lines, "", undefined, `· ${m.text}`, { dim: true }, opts.width);
         break;
       case "thought":
         pushWrapped(
@@ -92,6 +119,7 @@ export function renderChat(
         break;
     }
   }
+  flushRun();
   if (opts.busy) {
     const thinking = messages[messages.length - 1]?.role === "assistant";
     lines.push({

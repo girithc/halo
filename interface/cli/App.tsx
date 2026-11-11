@@ -61,6 +61,8 @@ function useSessionView({
   // Scroll: 0 = pinned to live tail; N = N lines back into history.
   const [scrollLines, setScrollLines] = useState(0);
   const maxScrollRef = useRef(0);
+  // ctrl+o: expand/collapse the tool-activity blocks.
+  const [expanded, setExpanded] = useState(false);
 
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -109,6 +111,11 @@ function useSessionView({
     }
     if (chunk === "\x1b") {
       if (busyRef.current) session.abort();
+      return;
+    }
+    if (chunk === "\x0f") {
+      // ctrl+o: expand/collapse tool-activity windows.
+      setExpanded((e) => !e);
       return;
     }
     if (chunk.startsWith("\x1b")) {
@@ -233,6 +240,7 @@ function useSessionView({
     setDraft,
     scrollLines,
     maxScrollRef,
+    expanded,
   };
 }
 
@@ -251,6 +259,7 @@ export function App({ session, commands, interactive = true, initialPrompt }: Ap
     frame,
     elapsed: view.elapsed,
     modelId: view.modelId,
+    expanded: view.expanded,
   });
 
   // Scroll window: offset 0 = live tail; N = N lines back into history.

@@ -85,6 +85,38 @@ expect(
   "prose around the chip still renders",
 );
 
+// --- 4. activity runs collapse to a bounded window; ctrl+o expands ---
+const busyTranscript = [
+  { id: 1, role: "user" as const, text: "investigate" },
+  { id: 2, role: "assistant" as const, text: "Checking." },
+  ...Array.from({ length: 7 }, (_, i) => ({
+    id: 3 + i,
+    role: "info" as const,
+    text: `⚙ tool(${i})`,
+  })),
+  { id: 10, role: "assistant" as const, text: "Done." },
+];
+const collapsed = renderChat(busyTranscript, {
+  width: 60, busy: false, frame: "⠋", elapsed: 0, modelId: "m", expanded: false,
+});
+const expandedAll = renderChat(busyTranscript, {
+  width: 60, busy: false, frame: "⠋", elapsed: 0, modelId: "m", expanded: true,
+});
+const collapsedText = collapsed.map((l) => rowText(l)).join("\n");
+const expandedText = expandedAll.map((l) => rowText(l)).join("\n");
+expect(
+  collapsedText.includes("3 earlier tool lines hidden (ctrl+o to expand)"),
+  "collapsed run shows the hidden counter",
+);
+expect(
+  collapsedText.includes("⚙ tool(6)") && !collapsedText.includes("⚙ tool(2)"),
+  "collapsed run keeps only the last 4 activity rows",
+);
+expect(
+  expandedText.includes("⚙ tool(0)") && expandedText.includes("⚙ tool(6)") && !expandedText.includes("hidden"),
+  "expanded run shows every tool line",
+);
+
 if (failures > 0) {
   console.error(`\n${failures} FAILURES`);
   process.exit(1);
