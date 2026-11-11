@@ -49,6 +49,7 @@ export function renderChat(
   },
 ): Line[] {
   const lines: Line[] = [];
+  let haloShown = false; // halo ❯ appears once per user request
   for (const m of messages) {
     // Blank line before conversation turns only — tool calls, results and
     // thinking lines hug whatever came above them, no wasted rows.
@@ -56,10 +57,14 @@ export function renderChat(
     for (let i = 0; i < gap; i++) lines.push({ text: "" });
     switch (m.role) {
       case "user":
+        haloShown = false; // next request shows halo ❯ again
         pushWrapped(lines, "you ❯ ", "magentaBright", m.text, {}, opts.width);
         break;
       case "assistant":
-        if (m.text) pushAssistantBody(lines, m.text, opts.width);
+        if (m.text) {
+          pushAssistantBody(lines, m.text, opts.width, !haloShown);
+          haloShown = true; // continuation rounds flow without the prefix
+        }
         break;
       case "info":
         pushWrapped(lines, "", undefined, `· ${m.text}`, { dim: true }, opts.width);
@@ -126,16 +131,23 @@ function wrapText(text: string, width: number): string[] {
 }
 
 /**
- * Assistant body renderer: prose carries the halo ❯ prefix (first line
- * only). ``` fences don't render as markers — their content becomes a
+ * Assistant body renderer: prose carries the halo ❯ prefix on the first
+ * line — but only when `showPrefix` is set (it's shown once per user
+ * request; continuation rounds after tool calls flow without it).
+ * ``` fences don't render as markers — their content becomes a
  * darker-background panel instead.
  */
 const CODE_PANEL_BG = "#262626";
 
-function pushAssistantBody(lines: Line[], body: string, width: number): void {
+function pushAssistantBody(
+  lines: Line[],
+  body: string,
+  width: number,
+  showPrefix = true,
+): void {
   let inFence = false;
   let code: string[] = [];
-  let firstLine = true;
+  let firstLine = showPrefix;
 
   // Paint the collected code lines as one padded dark panel.
   const flushCode = () => {
