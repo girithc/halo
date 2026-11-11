@@ -10,6 +10,7 @@
 import { gatherContext } from "./in/context";
 import { runTurn } from "./out/completion";
 import type { ToolRegistry } from "./middleware/tools/registry";
+import type { NoteStore } from "./middleware/tools/notes/store";
 import type { ChatMessage } from "../models/types";
 import type { ModelRegistry } from "../models/registry";
 
@@ -33,6 +34,8 @@ export interface AgentSessionOptions {
   getApiKey: () => Promise<string>;
   /** Tools advertised to the model; omit for plain chat. */
   tools?: ToolRegistry;
+  /** Agent notes; "temp" notes are cleared when each turn completes. */
+  notes?: NoteStore;
   systemPrompt?: string;
 }
 
@@ -40,6 +43,7 @@ export class AgentSession {
   #registry: ModelRegistry;
   #getApiKey: () => Promise<string>;
   #tools?: ToolRegistry;
+  #notes?: NoteStore;
   #systemPrompt: string;
   #history: ChatMessage[] = [];
   #entries: SessionEntry[] = [];
@@ -53,6 +57,7 @@ export class AgentSession {
     this.#registry = options.registry;
     this.#getApiKey = options.getApiKey;
     this.#tools = options.tools;
+    this.#notes = options.notes;
     this.#systemPrompt = options.systemPrompt ?? "";
   }
 
@@ -164,6 +169,7 @@ export class AgentSession {
       }
       this.#busy = false;
       this.#abort = null;
+      this.#notes?.clearTemp(); // temp notes live for exactly one turn
       this.#emit();
     }
   }

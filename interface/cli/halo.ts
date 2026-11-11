@@ -26,6 +26,12 @@ import {
   PROVIDER_MODELS,
   needsApiKey,
 } from "../../models/registry";
+import { ToolRegistry } from "../../core/middleware/tools/registry";
+import { NoteStore } from "../../core/middleware/tools/notes/store";
+import { registerFileTools } from "../../core/middleware/tools/files";
+import { registerShellTool } from "../../core/middleware/tools/shell";
+import { registerNoteTools } from "../../core/middleware/tools/notes";
+import { registerGitTools } from "../../core/middleware/tools/git";
 import type { ModelConfig } from "../../models/types";
 import { configPath, loadConfig, saveConfig } from "../../secrets/config";
 import { maskKey, resolveApiKey, saveApiKey, type ApiKey } from "../../secrets/store";
@@ -90,18 +96,28 @@ async function main(): Promise<void> {
   const apiKey = auth.key;
 
   // The headless conductor: context gathering (in) + completion loop (out).
+  // Tools: file ops + shell + notes + git — the model can act, not just talk.
+  const notes = new NoteStore();
+  const tools = new ToolRegistry();
+  registerFileTools(tools);
+  registerShellTool(tools);
+  registerNoteTools(tools, notes);
+  registerGitTools(tools);
+
   const session = new AgentSession({
     registry,
     getApiKey: async () =>
       (await resolveApiKey(registry.active().apiKeyEnv))?.key ?? apiKey,
     systemPrompt: SYSTEM_PROMPT,
+    tools,
+    notes,
   });
 
   const oneShot = flags.filter((a) => !a.startsWith("-"));
 
   if (oneShot.length > 0) {
     // Plain non-interactive mode: one request, streamed to stdout.
-    await plainSend(registry, apiKey, oneShot.join(" "));
+    await plainSend(registry, apiKey, oneShot.join(" "), tools);
     return;
   }
 
@@ -336,6 +352,7 @@ async function plainSend(
   registry: ModelRegistry,
   apiKey: string,
   text: string,
+  tools?: ToolRegistry,
 ): Promise<void> {
   const view = out.createStreamView(`waiting · ${registry.active().id}`);
   const ac = new AbortController();
@@ -345,7 +362,7 @@ async function plainSend(
       (await resolveApiKey(registry.active().apiKeyEnv)) ?? { key: apiKey, source: "" };
     const provider = registry.createProvider(requestAuth.key);
     const messages = gatherContext([], text, { systemPrompt: SYSTEM_PROMPT });
-    for await (const event of runTurn({ provider, messages, signal: ac.signal })) {
+    for await (const event of runTurn({ provider, messages, tools, signal: ac.signal })) {
       if (event.type === "reasoning") view.reasoning(event.text);
       else if (event.type === "answer") {
         reply += event.text;
