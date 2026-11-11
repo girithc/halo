@@ -171,8 +171,6 @@ function wrapText(text: string, width: number): string[] {
 
 /** Darker panel background shared by code blocks and inline chips. */
 const CODE_PANEL_BG = "#262626";
-/** Code text: white smoke, subtly distinct from prose white. */
-const CODE_COLOR = "#F5F5F5";
 
 /** Inline code chip: blue on the code-panel background. */
 const INLINE_CODE_STYLE = { color: "blue", bgColor: CODE_PANEL_BG };
@@ -279,11 +277,15 @@ function pushAssistantBody(
     if (rows.length === 0) return;
     const blockWidth = Math.min(width - 2, Math.max(...rows.map((r) => r.length)) + 4);
     for (const row of rows) {
-      lines.push({
-        text: ("  " + row).padEnd(blockWidth),
-        bgColor: CODE_PANEL_BG,
-        color: CODE_COLOR,
-      });
+      // highlight first, then pad: every part carries the panel bg so the
+      // block stays one solid panel
+      const parts = highlightCode(row);
+      const first = parts[0];
+      if (first) first.text = "  " + first.text;
+      const used = parts.reduce((n, p) => n + p.text.length, 0);
+      const pad = blockWidth - used;
+      if (pad > 0) parts.push({ text: " ".repeat(pad), bgColor: CODE_PANEL_BG });
+      lines.push({ text: "", parts });
     }
   };
 
@@ -335,6 +337,93 @@ function pushWrapped(
   for (let i = 0; i < Math.max(0, Math.floor(spacing)); i++) {
     lines.push({ text: "" });
   }
+}
+
+// ---- syntax highlighting (VS Code Dark+ palette) -----------------------------
+
+const VS_KEYWORD = "#569CD6"; // const, class, export, return-type words
+const VS_CONTROL = "#C586C0"; // if, for, return, await...
+const VS_TYPE = "#4EC9B0"; // class names / types
+const VS_FUNCTION = "#DCDCAA"; // called functions
+const VS_STRING = "#CE9178";
+const VS_COMMENT = "#6A9955";
+const VS_NUMBER = "#B5CEA8";
+
+const CONTROL_WORDS = new Set([
+  "if", "else", "for", "while", "return", "switch", "case", "break",
+  "continue", "do", "try", "catch", "throw", "finally",
+]);
+const KEYWORDS = new Set([
+  "const", "let", "var", "function", "class", "export", "import", "from",
+  "new", "this", "extends", "implements", "type", "interface", "enum",
+  "async", "await", "of", "in", "typeof", "instanceof", "public", "private",
+  "readonly", "static", "default", "null", "undefined", "true", "false",
+  "void", "string", "number", "boolean", "any", "unknown", "never",
+]);
+
+function classifyWord(word: string, rest: string): string | undefined {
+  if (CONTROL_WORDS.has(word)) return VS_CONTROL;
+  if (KEYWORDS.has(word)) return VS_KEYWORD;
+  if (/^\s*\(/.test(rest)) return VS_FUNCTION; // called function
+  if (/^[A-Z]/.test(word)) return VS_TYPE; // class/type identifier
+  return undefined;
+}
+
+/**
+ * Tokenize one code line into VS Code Dark+ colored parts. Every part
+ * carries the panel bg so highlighted rows stay one solid block.
+ */
+function highlightCode(line: string): LinePart[] {
+  const out: LinePart[] = [];
+  let i = 0;
+  while (i < line.length) {
+    const ch = line[i]!;
+    if (line.startsWith("//", i)) {
+      out.push({ text: line.slice(i), color: VS_COMMENT, bgColor: CODE_PANEL_BG });
+      i = line.length;
+      break;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      let j = i + 1;
+      while (j < line.length && line[j] !== ch) {
+        if (line[j] === "\\") j++; // skip escaped quote
+        j++;
+      }
+      out.push({ text: line.slice(i, j + 1), color: VS_STRING, bgColor: CODE_PANEL_BG });
+      i = j + 1;
+      continue;
+    }
+    if (/[0-9]/.test(ch)) {
+      let j = i;
+      while (j < line.length && /[0-9._]/.test(line[j]!)) j++;
+      out.push({ text: line.slice(i, j), color: VS_NUMBER, bgColor: CODE_PANEL_BG });
+      i = j;
+      continue;
+    }
+    if (/[A-Za-z_$]/.test(ch)) {
+      let j = i;
+      while (j < line.length && /[\w$]/.test(line[j]!)) j++;
+      const word = line.slice(i, j);
+      out.push({
+        text: word,
+        color: classifyWord(word, line.slice(j)),
+        bgColor: CODE_PANEL_BG,
+      });
+      i = j;
+      continue;
+    }
+    out.push({ text: ch, bgColor: CODE_PANEL_BG });
+    i++;
+  }
+
+  // merge runs of the same style into fewer parts
+  const merged: LinePart[] = [];
+  for (const part of out) {
+    const last = merged[merged.length - 1];
+    if (last && last.color === part.color) last.text += part.text;
+    else merged.push({ ...part });
+  }
+  return merged;
 }
 
 // ---- plain-stdout printing (no TUI) ------------------------------------------

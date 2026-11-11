@@ -33,14 +33,23 @@ const expect = (cond: boolean, why: string) => {
 };
 
 expect(
-  panel.some((l) => l.bgColor && l.text.trim() === "export class ToolRegistry {"),
+  panel.some((l) => l.bgColor && rowText(l).trim() === "export class ToolRegistry {"),
   "code block renders as a panel",
 );
 expect(
-  panel.some((l) => l.bgColor && l.text.trim().startsWith("register(tool: Tool)")),
+  panel.some((l) => l.bgColor && rowText(l).trim().startsWith("register(tool: Tool)")),
   "code indentation survives inside the panel",
 );
-expect(!panel.some((l) => l.text.includes("```")), "fence markers never render");
+expect(!panel.some((l) => rowText(l).includes("```")), "fence markers never render");
+const kwRow = panel.find((l) => l.bgColor && rowText(l).includes("export class"))!;
+expect(
+  kwRow.parts!.some((p) => p.text.trim() === "export" && p.color === "#569CD6"),
+  "keywords are VS Code blue",
+);
+expect(
+  kwRow.parts!.some((p) => p.text === "ToolRegistry" && p.color === "#4EC9B0"),
+  "class names are VS Code teal",
+);
 
 // --- 2. halo ❯ shows once per user request ---
 const multi = renderChat(
