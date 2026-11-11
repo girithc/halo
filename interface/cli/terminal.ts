@@ -51,7 +51,15 @@ export interface LinePart {
 /** Activity rows (tool calls/results) visible before collapsing. */
 const MAX_ACTIVITY_VISIBLE = 4;
 
-/** Renders the chat data as lines (prefixes, colors, spacing). */
+/** Darker panel background shared by code blocks and inline chips. */
+const CODE_PANEL_BG = "#262626";
+
+/**
+ * Renders the chat data as lines. Entries are grouped into turns (each
+ * user entry starts one); the tool activity of a turn is a bounded
+ * window — a live tail while the turn runs, a one-line counter after,
+ * and fully expandable with ctrl+o.
+ */
 export function renderChat(
   messages: readonly SessionEntry[],
   opts: {
@@ -66,60 +74,92 @@ export function renderChat(
 ): Line[] {
   const lines: Line[] = [];
   const expanded = opts.expanded === true;
-  let haloShown = false; // halo ❯ appears once per user request
 
-  // Consecutive info entries (tool calls + results) form activity runs —
-  // rendered as a bounded window so thinking can't flood the transcript.
-  let run: SessionEntry[] = [];
-  const flushRun = () => {
-    if (run.length === 0) return;
-    const hidden = expanded ? 0 : Math.max(0, run.length - MAX_ACTIVITY_VISIBLE);
-    if (hidden > 0) {
-      lines.push({
-        text: `· ⋯ ${hidden} earlier tool line${hidden === 1 ? "" : "s"} hidden (ctrl+o to expand)`,
-        dim: true,
-        italic: true,
-      });
-    }
-    for (const entry of expanded ? run : run.slice(-MAX_ACTIVITY_VISIBLE)) {
-      lines.push({ text: `· ${entry.text}`, dim: true });
-    }
-    run = [];
-  };
-
-  for (const m of messages) {
-    if (m.role === "info") {
-      run.push(m);
-      continue;
-    }
-    flushRun();
-    // Blank line before conversation turns only — activity and thinking
-    // lines hug whatever came above them, no wasted rows.
-    for (let i = 0; i < 1; i++) lines.push({ text: "" });
-    switch (m.role) {
-      case "user":
-        haloShown = false; // next request shows halo ❯ again
-        pushWrapped(lines, "you ❯ ", "magentaBright", m.text, {}, opts.width);
-        break;
-      case "assistant":
-        if (m.text) {
-          pushAssistantBody(lines, m.text, opts.width, !haloShown);
-          haloShown = true; // continuation rounds flow without the prefix
-        }
-        break;
-      case "thought":
-        pushWrapped(
-          lines,
-          "",
-          undefined,
-          `✻ thought for ${m.seconds ?? 1}s`,
-          { dim: true, italic: true },
-          opts.width,
-        );
-        break;
-    }
+  // Group entries into turns: every user entry starts a new turn.
+  interface TurnGroup {
+    user?: SessionEntry;
+    items: SessionEntry[];
   }
-  flushRun();
+  const turns: TurnGroup[] = [];
+  for (const m of messages) {
+    if (m.role === "user") turns.push({ user: m, items: [] });
+    else if (turns.length === 0) turns.push({ items: [m] });
+    else turns[turns.length - 1]!.items.push(m);
+  }
+
+  turns.forEach((turn, turnIdx) => {
+    // The active (last, busy) turn shows a live activity tail; finished
+    // turns collapse to a one-line counter. ctrl+o expands everything.
+    const isActive = opts.busy && turnIdx === turns.length - 1;
+    let haloShown = false;
+
+    const activity: SessionEntry[] = [];
+    const flushActivity = () => {
+      if (activity.length === 0) return;
+      if (expanded) {
+        for (const e of activity) lines.push({ text: `· ${e.text}`, dim: true });
+      } else if (isActive) {
+        const hidden = Math.max(0, activity.length - MAX_ACTIVITY_VISIBLE);
+        if (hidden > 0) {
+          lines.push({
+            text: `· ⋯ ${hidden} earlier tool line${hidden === 1 ? "" : "s"} hidden`,
+            dim: true,
+            italic: true,
+          });
+        }
+        for (const e of activity.slice(-MAX_ACTIVITY_VISIBLE)) {
+          lines.push({ text: `· ${e.text}`, dim: true });
+        }
+      } else {
+        lines.push({
+          text: `· ⋯ ${activity.length} tool use${activity.length === 1 ? "" : "s"} (ctrl+o to expand)`,
+          dim: true,
+          italic: true,
+        });
+      }
+      activity.length = 0;
+    };
+
+    for (let i = 0; i < 1; i++) lines.push({ text: "" });
+    if (turn.user) {
+      pushWrapped(lines, "you ❯ ", "magentaBright", turn.user.text, {}, opts.width);
+    }
+    for (const m of turn.items) {
+      if (m.role === "info") {
+        // tool calls/results → the turn's activity window; other notices
+        // (errors, help output) always render directly
+        if (m.text.startsWith("⚙") || m.text.startsWith("↳")) {
+          activity.push(m);
+          continue;
+        }
+        flushActivity();
+        lines.push({ text: `· ${m.text}`, dim: true });
+        continue;
+      }
+      flushActivity();
+      for (let i = 0; i < 1; i++) lines.push({ text: "" });
+      switch (m.role) {
+        case "assistant":
+          if (m.text) {
+            pushAssistantBody(lines, m.text, opts.width, !haloShown);
+            haloShown = true; // continuation rounds flow without the prefix
+          }
+          break;
+        case "thought":
+          pushWrapped(
+            lines,
+            "",
+            undefined,
+            `✻ thought for ${m.seconds ?? 1}s`,
+            { dim: true, italic: true },
+            opts.width,
+          );
+          break;
+      }
+    }
+    flushActivity();
+  });
+
   if (opts.busy) {
     const thinking = messages[messages.length - 1]?.role === "assistant";
     lines.push({
@@ -132,127 +172,13 @@ export function renderChat(
   return lines;
 }
 
-/** Greedy word wrap that PRESERVES each line's leading indentation
- * (code blocks keep their nesting) and hard-splits overlong words. */
-function wrapText(text: string, width: number): string[] {
-  const out: string[] = [];
-  for (const paragraph of text.split("\n")) {
-    const lead = (paragraph.match(/^ */) ?? [""])[0] ?? "";
-    const body = paragraph.slice(lead.length);
-    if (body === "") {
-      out.push("");
-      continue;
-    }
-    const lineWidth = Math.max(10, width - lead.length);
-    let line = "";
-    for (const word of body.split(" ")) {
-      let w = word;
-      if (!line) {
-        while (w.length > lineWidth) {
-          out.push(lead + w.slice(0, lineWidth));
-          w = w.slice(lineWidth);
-        }
-        line = w;
-      } else if ((line + " " + w).length <= lineWidth) {
-        line += " " + w;
-      } else {
-        out.push(lead + line);
-        while (w.length > lineWidth) {
-          out.push(lead + w.slice(0, lineWidth));
-          w = w.slice(lineWidth);
-        }
-        line = w;
-      }
-    }
-    out.push(lead + line);
-  }
-  return out;
-}
-
-/** Darker panel background shared by code blocks and inline chips. */
-const CODE_PANEL_BG = "#262626";
-
-/** Inline code chip: blue on the code-panel background. */
-const INLINE_CODE_STYLE = { color: "blue", bgColor: CODE_PANEL_BG };
-
-/** Split a prose line into plain and `inline-code` segments. */
-function splitInlineCode(text: string): Array<{ text: string; code?: boolean }> {
-  return text
-    .split("`")
-    .map((part, i) => (i % 2 === 1 ? { text: part, code: true as const } : { text: part }))
-    .filter((seg) => seg.text.length > 0);
-}
-
-/** Push one prose row of segments, wrapping words across rows. */
-function pushProse(
-  lines: Line[],
-  segs: Array<{ text: string; code?: boolean }>,
-  prefix: string,
-  prefixColor: string | undefined,
-  width: number,
-): void {
-  interface Token {
-    text: string;
-    code?: boolean;
-  }
-  const tokens: Token[] = [];
-  for (const seg of segs) {
-    if (seg.code) {
-      tokens.push({ text: seg.text, code: true });
-      continue;
-    }
-    for (const word of seg.text.split(" ")) {
-      if (word) tokens.push({ text: word });
-    }
-  }
-
-  const rows: Token[][] = [];
-  let row: Token[] = [];
-  let len = prefix.length;
-  let pendingSpace = false;
-  for (const token of tokens) {
-    const need = (pendingSpace ? 1 : 0) + token.text.length;
-    const rowWidth = rows.length === 0 ? Math.max(10, width - prefix.length) : Math.max(10, width - 2);
-    if (len + need > rowWidth && row.length > 0) {
-      rows.push(row);
-      row = [];
-      len = 2; // continuation rows carry the "  " indent
-      pendingSpace = false;
-    }
-    len += need;
-    row.push(token);
-    pendingSpace = true;
-  }
-  rows.push(row);
-
-  rows.forEach((tokensForRow, rowIdx) => {
-    const parts: LinePart[] = [];
-    tokensForRow.forEach((token, i) => {
-      if (i > 0) parts.push({ text: " " });
-      parts.push(
-        token.code
-          ? { text: token.text, ...INLINE_CODE_STYLE }
-          : { text: token.text },
-      );
-    });
-    const isFirst = rowIdx === 0;
-    lines.push({
-      text: "",
-      prefix: isFirst ? prefix : "  ",
-      prefixColor: isFirst ? prefixColor : undefined,
-      parts,
-    });
-  });
-}
-
 /**
  * Assistant body renderer: prose carries the halo ❯ prefix on the first
- * line — but only when `showPrefix` is set (it's shown once per user
- * request; continuation rounds after tool calls flow without it).
- * Inline `code` spans render as blue chips. ``` fences don't render as
- * markers — their content becomes a darker-background panel instead.
+ * line — but only when `showPrefix` is set (shown once per user request;
+ * continuation rounds after tool calls flow without it). Inline `code`
+ * spans render as blue chips. ``` fences don't render as markers —
+ * their content becomes a darker-background panel instead.
  */
-
 function pushAssistantBody(
   lines: Line[],
   body: string,
@@ -263,7 +189,7 @@ function pushAssistantBody(
   let code: string[] = [];
   let firstLine = showPrefix;
 
-  // Paint the collected code lines as one padded dark panel.
+  // Paint the collected code lines as one padded, syntax-highlighted panel.
   const flushCode = () => {
     const codeWidth = Math.max(10, width - 6);
     const rows: string[] = [];
@@ -316,32 +242,83 @@ function pushAssistantBody(
   if (inFence) flushCode(); // unclosed fence at end of body
 }
 
-function pushWrapped(
+/** Inline code chip: blue on the code-panel background. */
+const INLINE_CODE_STYLE = { color: "blue", bgColor: CODE_PANEL_BG };
+
+/** Split a prose line into plain and `inline-code` segments. */
+function splitInlineCode(text: string): Array<{ text: string; code?: boolean }> {
+  return text
+    .split("`")
+    .map((part, i) => (i % 2 === 1 ? { text: part, code: true as const } : { text: part }))
+    .filter((seg) => seg.text.length > 0);
+}
+
+/** Push one prose row of segments, wrapping words across rows. */
+function pushProse(
   lines: Line[],
+  segs: Array<{ text: string; code?: boolean }>,
   prefix: string,
   prefixColor: string | undefined,
-  body: string,
-  style: { color?: string; dim?: boolean; italic?: boolean },
   width: number,
-  spacing = 0, // optional: blank lines added below the pushed content
 ): void {
-  const firstWidth = Math.max(10, width - prefix.length);
-  const wrapped = wrapText(body, firstWidth);
-  wrapped.forEach((text, i) => {
-    if (i === 0 && prefix) {
-      lines.push({ prefix, prefixColor, text, ...style });
-    } else {
-      lines.push({ prefix: "  ", text, ...style });
-    }
-  });
-  for (let i = 0; i < Math.max(0, Math.floor(spacing)); i++) {
-    lines.push({ text: "" });
+  interface Token {
+    text: string;
+    code?: boolean;
   }
+  const tokens: Token[] = [];
+  for (const seg of segs) {
+    if (seg.code) {
+      tokens.push({ text: seg.text, code: true });
+      continue;
+    }
+    for (const word of seg.text.split(" ")) {
+      if (word) tokens.push({ text: word });
+    }
+  }
+
+  const rows: Token[][] = [];
+  let row: Token[] = [];
+  let len = prefix.length;
+  let pendingSpace = false;
+  for (const token of tokens) {
+    const need = (pendingSpace ? 1 : 0) + token.text.length;
+    const rowWidth =
+      rows.length === 0 ? Math.max(10, width - prefix.length) : Math.max(10, width - 2);
+    if (len + need > rowWidth && row.length > 0) {
+      rows.push(row);
+      row = [];
+      len = 2; // continuation rows carry the "  " indent
+      pendingSpace = false;
+    }
+    len += need;
+    row.push(token);
+    pendingSpace = true;
+  }
+  rows.push(row);
+
+  rows.forEach((tokensForRow, rowIdx) => {
+    const parts: LinePart[] = [];
+    tokensForRow.forEach((token, i) => {
+      if (i > 0) parts.push({ text: " " });
+      parts.push(
+        token.code
+          ? { text: token.text, ...INLINE_CODE_STYLE }
+          : { text: token.text },
+      );
+    });
+    const isFirst = rowIdx === 0;
+    lines.push({
+      text: "",
+      prefix: isFirst ? prefix : "  ",
+      prefixColor: isFirst ? prefixColor : undefined,
+      parts,
+    });
+  });
 }
 
 // ---- syntax highlighting (VS Code Dark+ palette) -----------------------------
 
-const VS_KEYWORD = "#569CD6"; // const, class, export, return-type words
+const VS_KEYWORD = "#569CD6"; // const, class, export, type words
 const VS_CONTROL = "#C586C0"; // if, for, return, await...
 const VS_TYPE = "#4EC9B0"; // class names / types
 const VS_FUNCTION = "#DCDCAA"; // called functions
@@ -424,6 +401,68 @@ function highlightCode(line: string): LinePart[] {
     else merged.push({ ...part });
   }
   return merged;
+}
+
+// ---- text helpers --------------------------------------------------------------
+
+/** Greedy word wrap that PRESERVES each line's leading indentation
+ * (code blocks keep their nesting) and hard-splits overlong words. */
+function wrapText(text: string, width: number): string[] {
+  const out: string[] = [];
+  for (const paragraph of text.split("\n")) {
+    const lead = (paragraph.match(/^ */) ?? [""])[0] ?? "";
+    const body = paragraph.slice(lead.length);
+    if (body === "") {
+      out.push("");
+      continue;
+    }
+    const lineWidth = Math.max(10, width - lead.length);
+    let line = "";
+    for (const word of body.split(" ")) {
+      let w = word;
+      if (!line) {
+        while (w.length > lineWidth) {
+          out.push(lead + w.slice(0, lineWidth));
+          w = w.slice(lineWidth);
+        }
+        line = w;
+      } else if ((line + " " + w).length <= lineWidth) {
+        line += " " + w;
+      } else {
+        out.push(lead + line);
+        while (w.length > lineWidth) {
+          out.push(lead + w.slice(0, lineWidth));
+          w = w.slice(lineWidth);
+        }
+        line = w;
+      }
+    }
+    out.push(lead + line);
+  }
+  return out;
+}
+
+function pushWrapped(
+  lines: Line[],
+  prefix: string,
+  prefixColor: string | undefined,
+  body: string,
+  style: { color?: string; dim?: boolean; italic?: boolean },
+  width: number,
+  spacing = 0, // optional: blank lines added below the pushed content
+): void {
+  const firstWidth = Math.max(10, width - prefix.length);
+  const wrapped = wrapText(body, firstWidth);
+  wrapped.forEach((text, i) => {
+    if (i === 0 && prefix) {
+      lines.push({ prefix, prefixColor, text, ...style });
+    } else {
+      lines.push({ prefix: "  ", text, ...style });
+    }
+  });
+  for (let i = 0; i < Math.max(0, Math.floor(spacing)); i++) {
+    lines.push({ text: "" });
+  }
 }
 
 // ---- plain-stdout printing (no TUI) ------------------------------------------
