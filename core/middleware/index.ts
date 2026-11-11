@@ -9,5 +9,6 @@
  */
 
 export { Tool, ToolRegistry } from "./tools/registry";
-export { McpServer, connectMcp } from "./mcp/client";
+export { createFileTools, registerFileTools } from "./tools/files";
+export { McpServer, McpServerSpec, connectMcp } from "./mcp/client";
 export { buildContext, ContextOptions } from "./context/context";
