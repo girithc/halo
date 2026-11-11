@@ -7,6 +7,14 @@
  */
 import { renderChat } from "../interface/cli/terminal";
 
+const isPanelRow = (l: { bgColor?: string; parts?: Array<{ bgColor?: string }> }): boolean =>
+  l.parts?.length ? l.parts.every((p) => p.bgColor === "#262626") : l.bgColor === "#262626";
+
+
+const rowText = (l: { text: string; parts?: Array<{ text: string }> }): string =>
+  l.parts ? l.parts.map((p) => p.text).join("") : l.text;
+
+
 // --- 1. code panels keep indentation + render as panels ---
 const panel = renderChat(
   [
@@ -32,16 +40,17 @@ const expect = (cond: boolean, why: string) => {
   }
 };
 
+// panel rows = every part carries the panel bg
 expect(
-  panel.some((l) => l.bgColor && rowText(l).trim() === "export class ToolRegistry {"),
+  panel.some((l) => isPanelRow(l) && rowText(l).trim() === "export class ToolRegistry {"),
   "code block renders as a panel",
 );
 expect(
-  panel.some((l) => l.bgColor && rowText(l).trim().startsWith("register(tool: Tool)")),
+  panel.some((l) => isPanelRow(l) && rowText(l).trim().startsWith("register(tool: Tool)")),
   "code indentation survives inside the panel",
 );
 expect(!panel.some((l) => rowText(l).includes("```")), "fence markers never render");
-const kwRow = panel.find((l) => l.bgColor && rowText(l).includes("export class"))!;
+const kwRow = panel.find((l) => isPanelRow(l) && rowText(l).includes("export class"))!;
 expect(
   kwRow.parts!.some((p) => p.text.trim() === "export" && p.color === "#569CD6"),
   "keywords are VS Code blue",
@@ -65,9 +74,6 @@ const multi = renderChat(
 );
 
 const assistantRows = multi.filter((l) => !l.bgColor && l.prefix !== undefined && l.prefixColor === "cyan");
-const rowText = (l: { text: string; parts?: Array<{ text: string }> }): string =>
-  l.parts ? l.parts.map((p) => p.text).join("") : l.text;
-
 const firstBubble = multi[multi.findIndex((l) => rowText(l).includes("Looking"))]!;
 const secondBubble = multi[multi.findIndex((l) => rowText(l).includes("It is in"))]!;
 expect(firstBubble.prefix === "halo ❯ ", "first bubble after request carries halo ❯");
